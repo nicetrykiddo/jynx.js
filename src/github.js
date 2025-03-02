@@ -1,14 +1,19 @@
 // src/github.js
-const { Octokit } = require("@octokit/rest");
 require("dotenv").config();
 
-const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+async function getOctokit() {
+  // Dynamically import Octokit from the ESM package
+  const { Octokit } = await import("@octokit/rest");
+  return new Octokit({ auth: process.env.GITHUB_TOKEN });
+}
+
 const OWNER = process.env.GITHUB_REPO_OWNER;
 const REPO = process.env.GITHUB_REPO_NAME;
 const MAIN_BRANCH = process.env.GITHUB_MAIN_BRANCH || "staging";
 
 async function commitNewCommand(cmdName, code) {
   try {
+    const octokit = await getOctokit();
     // Get the latest commit SHA from the staging branch.
     const { data: baseRef } = await octokit.git.getRef({
       owner: OWNER,
@@ -26,7 +31,7 @@ async function commitNewCommand(cmdName, code) {
       sha: baseSha,
     });
 
-    // Set the file path and content.
+    // Create the new command file content.
     const filePath = `src/commands/${cmdName}.js`;
     const fileContent = `module.exports = ${code.trim()}\n`;
     const contentEncoded = Buffer.from(fileContent, "utf8").toString("base64");
@@ -41,7 +46,7 @@ async function commitNewCommand(cmdName, code) {
       content: contentEncoded,
     });
 
-    // Create a pull request.
+    // Create a pull request from the new branch into staging.
     const pr = await octokit.pulls.create({
       owner: OWNER,
       repo: REPO,
