@@ -1,89 +1,92 @@
 // src/bot.js
 require("dotenv").config();
 const { Telegraf } = require("telegraf");
-const { generateAIReply } = require("./model");
-const { logMessage } = require("./db");
-const { commitNewCommand } = require("./github");
-const { logDecision, logError } = require("./utils");
+const axios = require("axios");
+const fs = require("fs");
+const path = require("path");
+const { classifyMessage, generateMessage } = require("./model");
+const { logConversation } = require("./db");
+const { logInfo, logError } = require("./utils");
 
-// Initialize Telegraf bot with your BOT_TOKEN
-const bot = new Telegraf(process.env.BOT_TOKEN);
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const INTENT_ENDPOINT =
+  process.env.AI_SERVICE_URL + "/classify" || "http://localhost:8000/classify";
+const GENERATE_ENDPOINT =
+  process.env.AI_SERVICE_URL + "/generate" || "http://localhost:8000/generate";
 
-// Command: /start
+const bot = new Telegraf(BOT_TOKEN);
+
+// Helper: Determine mode from message prefix
+function parseMode(text) {
+  const trimmed = text.trim();
+  // Check for commands: /code, /chat, /mixture (case-insensitive)
+  if (trimmed.toLowerCase().startsWith("/code")) {
+    return { mode: "code", newText: trimmed.slice(5).trim() };
+  } else if (trimmed.toLowerCase().startsWith("/chat")) {
+    return { mode: "chat", newText: trimmed.slice(5).trim() };
+  } else if (trimmed.toLowerCase().startsWith("/mixture")) {
+    return { mode: "mixture", newText: trimmed.slice(8).trim() };
+  }
+  // If no prefix, return empty mode so that the AI service decides
+  return { mode: "", newText: text };
+}
+
+// /start command
 bot.start((ctx) => {
   ctx.reply(
-    "🤖 Hello! I'm your AI-powered bot. Type anything or /help for commands."
+    "🤖 Hi! I'm your smart AI bot. Use /chat, /code, or /mixture as a prefix to set mode, or just type your message."
   );
 });
 
-// Command: /help
-bot.command("help", (ctx) => {
+// /help command
+bot.help((ctx) => {
   ctx.reply(
-    "Available commands:\n/start - Start bot\n/help - Show this help message\n(For owners: generating new commands if undefined.)"
+    "Usage:\n" +
+      "- To get a normal chat reply: type your message normally or prefix with /chat\n" +
+      "- To generate code: prefix your message with /code\n" +
+      "- To get a mixture (code + chat flavor): prefix with /mixture\n" +
+      "If no mode is specified, I'll try to decide for you!"
   );
 });
 
-// Handle text messages (chat mode)
+// Main text handler
 bot.on("text", async (ctx) => {
-  const chatId = ctx.chat.id.toString();
-  const userMessage = ctx.message.text;
+  const chatId = String(ctx.chat.id);
+  let { mode, newText } = parseMode(ctx.message.text);
+  if (!newText) newText = ctx.message.text; // fallback
 
-  // Log the user's message
-  logMessage(chatId, "user", userMessage);
+  // Log incoming message
+  logConversation(chatId, "user", newText);
 
-  // Get AI response (replace this with your model integration later)
-  let aiReply;
+  // Call the intent classifier service
   try {
-    aiReply = await generateAIReply(chatId, userMessage);
-  } catch (err) {
-    logError(err);
-    aiReply = "⚠️ Sorry, I encountered an error.";
-  }
-
-  // Reply to user and log the response
-  await ctx.reply(aiReply);
-  logMessage(chatId, "assistant", aiReply);
-});
-
-// Example: Handling an undefined command (owner only triggers AI code generation)
-bot.on("text", async (ctx) => {
-  const messageText = ctx.message.text;
-  if (messageText.startsWith("/")) {
-    // Extract command (remove leading slash)
-    const cmdName = messageText.split(" ")[0].slice(1).toLowerCase();
-    // For simplicity, if command is not recognized and sender is owner, generate new command
-    const ownerIds = process.env.OWNER_IDS.split(",").map((id) => id.trim());
-    if (ownerIds.includes(String(ctx.from.id))) {
-      // Here, you could call your AI code generation function.
-      // For now, we'll simulate by creating a dummy command that echoes text.
-      const generatedCode =
-        "async function " +
-        cmdName +
-        "(ctx) { await ctx.reply('This is the new /" +
-        cmdName +
-        " command.'); }";
-      try {
-        await commitNewCommand(cmdName, generatedCode);
-        ctx.reply(
-          `✅ Generated code for /${cmdName} and opened a PR on GitHub for review.`
-        );
-        logDecision(
-          `Generated code for /${cmdName} by owner ${
-            ctx.from.username || ctx.from.id
-          }`
-        );
-      } catch (err) {
-        ctx.reply(`⚠️ Failed to commit new command: ${err.message}`);
-      }
+    const classifyRes = await classifyMessage(chatId, newText);
+    if (!classifyRes.should_reply) {
+      logInfo(`No reply needed for chat ${chatId}`);
+      return;
     }
+  } catch (err) {
+    logError(`Classification error: ${err.message}`);
+    // Optionally continue even if classification fails.
+    return;
+  }
+
+  // Use the provided mode if set; otherwise pass empty string to let AI service decide.
+  try {
+    const generateRes = await generateMessage(chatId, newText, 1000, mode);
+    const reply = generateRes.reply;
+    await ctx.reply(reply);
+    logConversation(chatId, "assistant", reply);
+  } catch (err) {
+    logError(`Generation error: ${err.message}`);
+    await ctx.reply("⚠️ Sorry, I'm having trouble generating a response.");
   }
 });
 
-// Start the bot
 bot.launch().then(() => {
-  console.log("Bot is running...");
+  logInfo("Telegram bot is running...");
 });
 
-// Enable graceful stop
+// Graceful shutdown
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));

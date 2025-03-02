@@ -1,13 +1,10 @@
 // src/utils.js
-function logDecision(message) {
-  console.log("[DECISION]", message);
+function logInfo(message) {
+  console.log(`[INFO] ${message}`);
 }
 
-function logError(error) {
-  console.error("[ERROR]", error);
+function logError(message) {
+  console.error(`[ERROR] ${message}`);
 }
 
-module.exports = {
-  logDecision,
-  logError,
-};
+module.exports = { logInfo, logError };
