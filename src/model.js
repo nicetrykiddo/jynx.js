@@ -1,10 +1,7 @@
 // src/model.js
 const axios = require("axios");
-const API_BASE = process.env.AI_SERVICE_URL || "http://0.0.0.0:8000";
+const API_BASE = process.env.AI_SERVICE_URL || "http://localhost:8000";
 
-/**
- * Calls the classify endpoint.
- */
 async function classifyMessage(chatId, text) {
   try {
     const response = await axios.post(
@@ -12,12 +9,9 @@ async function classifyMessage(chatId, text) {
       {
         chat_id: chatId,
         text: text,
-        max_tokens: 1000, // Not used in classification but required by schema.
+        max_tokens: 1000,
       },
-      {
-        headers: { "Content-Type": "application/json" },
-        timeout: 15000,
-      }
+      { headers: { "Content-Type": "application/json" }, timeout: 15000 }
     );
     return response.data;
   } catch (err) {
@@ -25,9 +19,6 @@ async function classifyMessage(chatId, text) {
   }
 }
 
-/**
- * Calls the generate endpoint with specified mode.
- */
 async function generateMessage(chatId, text, max_tokens, mode) {
   try {
     const response = await axios.post(
@@ -36,12 +27,9 @@ async function generateMessage(chatId, text, max_tokens, mode) {
         chat_id: chatId,
         text: text,
         max_tokens: max_tokens,
-        mode: mode, // "chat", "code", "mixture", or empty.
+        mode: mode,
       },
-      {
-        headers: { "Content-Type": "application/json" },
-        timeout: 60000,
-      }
+      { headers: { "Content-Type": "application/json" }, timeout: 60000 }
     );
     return response.data;
   } catch (err) {

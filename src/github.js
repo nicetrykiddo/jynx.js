@@ -9,6 +9,7 @@ const MAIN_BRANCH = process.env.GITHUB_MAIN_BRANCH || "staging";
 
 async function commitNewCommand(cmdName, code) {
   try {
+    // Get the latest commit SHA from the staging branch.
     const { data: baseRef } = await octokit.git.getRef({
       owner: OWNER,
       repo: REPO,
@@ -16,6 +17,7 @@ async function commitNewCommand(cmdName, code) {
     });
     const baseSha = baseRef.object.sha;
 
+    // Create a new branch.
     const branchName = `auto/${cmdName}-${Date.now()}`;
     await octokit.git.createRef({
       owner: OWNER,
@@ -24,10 +26,12 @@ async function commitNewCommand(cmdName, code) {
       sha: baseSha,
     });
 
+    // Set the file path and content.
     const filePath = `src/commands/${cmdName}.js`;
     const fileContent = `module.exports = ${code.trim()}\n`;
     const contentEncoded = Buffer.from(fileContent, "utf8").toString("base64");
 
+    // Create or update the file in the new branch.
     await octokit.repos.createOrUpdateFileContents({
       owner: OWNER,
       repo: REPO,
@@ -37,6 +41,7 @@ async function commitNewCommand(cmdName, code) {
       content: contentEncoded,
     });
 
+    // Create a pull request.
     const pr = await octokit.pulls.create({
       owner: OWNER,
       repo: REPO,
@@ -49,7 +54,7 @@ async function commitNewCommand(cmdName, code) {
     console.log(`GitHub: Created PR #${pr.data.number} for /${cmdName}`);
     return pr.data;
   } catch (err) {
-    console.error("GitHub integration error:", err);
+    console.error("GitHub integration error:", err.message);
     throw err;
   }
 }

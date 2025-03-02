@@ -1,7 +1,12 @@
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from model_intent import classify_intent
-from model_llm import generate_code_reply, generate_chat_reply, generate_mixture_reply, adjust_max_tokens
+from model_llm import (
+    generate_code_reply, 
+    generate_chat_reply, 
+    generate_mixture_reply, 
+    adjust_max_tokens
+)
 import logging
 
 # Configure logging
@@ -16,9 +21,17 @@ class MessageRequest(BaseModel):
     max_tokens: int = 1000
     mode: str = None
 
+class AutogenRequest(BaseModel):
+    command_name: str
+    description: str
+    max_tokens: int = 150
+
+# In-memory cache for responses
+response_cache = {}
+
 def decide_mode(text: str) -> str:
     """Heuristic to decide mode based on text keywords."""
-    code_keywords = ["function", "code", "script", "python", "javascript", "java", "c++", "nodejs", "react", "html", "css", "sql", "database", "api"],
+    code_keywords = ["function", "code", "script", "python", "javascript", "java", "c++", "nodejs", "react", "html", "css", "sql", "database", "api"]
     text_lower = text.lower()
     if any(keyword in text_lower for keyword in code_keywords):
         return "code"
@@ -53,6 +66,7 @@ async def generate_message(request: MessageRequest, background_tasks: Background
         
         response_cache[cache_key] = reply
         
+        # Prune cache if it grows too large
         if len(response_cache) > 1000:
             keys_to_remove = list(response_cache.keys())[:200]
             for key in keys_to_remove:
@@ -64,4 +78,21 @@ async def generate_message(request: MessageRequest, background_tasks: Background
         logger.error(f"Generation error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-response_cache = {}
+@app.post("/autogen")
+async def autogen_command(request: AutogenRequest):
+    """
+    Autogenerate a Node.js command handler for a new command.
+    The prompt instructs the code-generation model to produce a complete JavaScript function.
+    """
+    try:
+        prompt = (
+            f"Generate a complete Node.js command handler function for a Telegram bot for the command '/{request.command_name}'. "
+            f"This command should {request.description}. "
+            f"Output only the JavaScript code without any explanation or comments."
+        )
+        command_code = generate_code_reply(prompt, max_new_tokens=request.max_tokens)
+        logger.info(f"Autogen generated code for command /{request.command_name}")
+        return {"command_code": command_code}
+    except Exception as e:
+        logger.error(f"Autogen error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -53,15 +53,15 @@ def generate_chat_reply(prompt: str, max_new_tokens: int = 50) -> str:
             **inputs,
             max_new_tokens=max_new_tokens,
             do_sample=True,
-            temperature=0.8,           # Slightly higher for more creativity
-            top_p=0.92,                # Higher top_p for more varied vocabulary
-            repetition_penalty=1.15,   # Slightly lower to allow natural repetition
+            temperature=0.8,
+            top_p=0.92,
+            repetition_penalty=1.15,
             pad_token_id=chat_tokenizer.eos_token_id,
             eos_token_id=chat_tokenizer.eos_token_id,
-            no_repeat_ngram_size=2,    # Lower for more natural speech patterns
-            length_penalty=0.8,        # Favors slightly longer responses
-            num_beams=3,               # Good balance of quality vs speed
-            early_stopping=True        # Stop when valid ending found
+            no_repeat_ngram_size=2,
+            length_penalty=0.8,
+            num_beams=3,
+            early_stopping=True
         )
     generated = chat_tokenizer.decode(output_ids[0], skip_special_tokens=True)
     return generated[len(prompt):].strip()
@@ -72,10 +72,10 @@ def generate_chat_reply(prompt: str, max_new_tokens: int = 50) -> str:
 def generate_mixture_reply(prompt: str, max_new_tokens: int = 150) -> str:
     # First, generate a code-focused reply.
     code_part = generate_code_reply(prompt, max_new_tokens=max_new_tokens // 2)
-    # Then, ask the chat model to add a conversational "flavor" or commentary.
-    mixed_prompt = f"Here is a piece of code:\n{code_part}\nNow, rewrite it with a conversational explanation."
+    # Then, ask the chat model to add conversational flavor.
+    mixed_prompt = f"Here is some code:\n{code_part}\nNow, rewrite this with a humorous and conversational explanation."
     chat_part = generate_chat_reply(mixed_prompt, max_new_tokens=max_new_tokens // 2)
-    # Combine the two outputs.
+    # Combine the outputs.
     return f"{code_part}\n\n{chat_part}"
 
 ##############################################
@@ -83,6 +83,5 @@ def generate_mixture_reply(prompt: str, max_new_tokens: int = 150) -> str:
 ##############################################
 def adjust_max_tokens(prompt: str, default_max: int = 1000) -> int:
     word_count = len(prompt.split())
-    # Reduce max tokens if prompt is very long.
     reduction = max(0, (word_count - 100) * 5)
     return max(50, default_max - reduction)
