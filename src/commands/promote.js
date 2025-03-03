@@ -1,0 +1,3 @@
+module.exports = type PromoteHandler struct {
+
+	// The name of this node in case it's required by the framework, e.g., 'node-bot' instead if not specified manually (optional) 		  */			name = "Node Bot"									/* Name used to identify what module is generated from and where */							privateName;				   /** Unique identifier given when creating new modules during runtime.*/								staticPublicModuleId: String("telegram_commands"); // ID that uniquely identifies telegrams within an application across all platforms    * /npm run --debug require("./" + privatePackagePath);                                * (/public/.+?TelegramCommander[\s]*) ?require(\1)/
