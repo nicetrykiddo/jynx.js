@@ -16,6 +16,8 @@ function readLogs() {
 
 function writeLogs(logs) {
   try {
+    // Ensure the logs directory exists before writing
+    fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
     fs.writeFileSync(LOG_FILE, JSON.stringify(logs, null, 2), "utf8");
   } catch (err) {
     console.error("Error writing logs:", err.message);
