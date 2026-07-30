@@ -1,0 +1,64 @@
+import { run } from '@grammyjs/runner';
+import { loadConfig, ConfigurationError } from './config.js';
+import { createLogger } from './core/logger.js';
+import { createStorage, pingDatabase } from './storage/db.js';
+import { Repository } from './storage/repository.js';
+import { AuthService } from './core/auth.js';
+import { createModelProvider } from './model/provider.js';
+import { ConversationService } from './core/conversation.js';
+import { createBot } from './telegram/bot.js';
+
+async function main(): Promise<void> {
+  let config;
+  try {
+    config = loadConfig();
+  } catch (error) {
+    if (error instanceof ConfigurationError) {
+      console.error(error.message);
+      process.exit(1);
+    }
+    throw error;
+  }
+
+  const logger = createLogger(config);
+  logger.info('starting jynx');
+
+  const storage = createStorage(config, logger);
+
+  try {
+    await pingDatabase(storage.pool);
+    logger.info('database connection ok');
+  } catch (error) {
+    logger.error({ err: error }, 'database connection failed');
+    process.exit(1);
+  }
+
+  const repository = new Repository(storage.db);
+  const auth = new AuthService(config);
+  const model = createModelProvider(config, logger);
+  const conversation = new ConversationService(config, repository, model);
+
+  const bot = createBot({ config, logger, auth, conversation, repository });
+
+  await bot.init();
+  logger.info({ username: bot.botInfo.username }, 'bot initialized');
+
+  const runner = run(bot);
+
+  const stop = async (signal: string): Promise<void> => {
+    logger.info({ signal }, 'shutting down');
+    if (runner.isRunning()) {
+      await runner.stop();
+    }
+    await storage.close();
+    process.exit(0);
+  };
+
+  process.once('SIGINT', () => void stop('SIGINT'));
+  process.once('SIGTERM', () => void stop('SIGTERM'));
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

@@ -1,0 +1,55 @@
+{
+  "name": "jynx",
+  "version": "2.0.0",
+  "description": "Jynx - a self-hosted Telegram AI agent",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "doctor": "tsx scripts/doctor.ts",
+    "test:magica": "tsx scripts/test-magica.ts"
+  },
+  "keywords": [
+    "telegram",
+    "ai",
+    "agent"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@grammyjs/runner": "^2.0.3",
+    "dotenv": "^17.4.2",
+    "drizzle-orm": "^0.36.4",
+    "grammy": "^1.31.0",
+    "pg": "^8.13.1",
+    "pino": "^9.5.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@types/pg": "^8.11.10",
+    "@typescript-eslint/eslint-plugin": "^8.15.0",
+    "@typescript-eslint/parser": "^8.15.0",
+    "drizzle-kit": "^0.28.1",
+    "eslint": "^9.15.0",
+    "eslint-config-prettier": "^9.1.0",
+    "pino-pretty": "^13.0.0",
+    "prettier": "^3.3.3",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.5"
+  }
+}
