@@ -34,6 +34,10 @@ export class AuthService {
   }
 
   public canApprove(userId: number): boolean {
-    return this.isAdmin(userId);
+    return this.isOwner(userId);
+  }
+
+  public canRequestWrites(userId: number): boolean {
+    return this.isOwner(userId);
   }
 }

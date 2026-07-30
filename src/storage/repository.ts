@@ -194,19 +194,31 @@ export class Repository {
   public async createApproval(input: {
     requestedBy?: number | null;
     kind: string;
+    stage?: string;
     summary: string;
     payload?: unknown;
+    taskId?: number | null;
   }): Promise<Approval> {
     const [row] = await this.db
       .insert(approvals)
       .values({
         requestedBy: input.requestedBy ?? null,
         kind: input.kind,
+        stage: input.stage ?? 'idea',
         summary: input.summary,
         payload: input.payload ?? null,
+        taskId: input.taskId ?? null,
       })
       .returning();
     return row as Approval;
+  }
+
+  public async listPendingApprovals(): Promise<Approval[]> {
+    return this.db
+      .select()
+      .from(approvals)
+      .where(eq(approvals.status, 'pending'))
+      .orderBy(desc(approvals.createdAt));
   }
 
   public async getApproval(id: number): Promise<Approval | undefined> {
@@ -225,5 +237,12 @@ export class Repository {
       .where(and(eq(approvals.id, id), eq(approvals.status, 'pending')))
       .returning();
     return row;
+  }
+
+  public async advanceApprovalStage(id: number, stage: string, taskId?: number | null): Promise<void> {
+    await this.db
+      .update(approvals)
+      .set({ stage, taskId: taskId ?? null })
+      .where(eq(approvals.id, id));
   }
 }

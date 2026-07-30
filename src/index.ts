@@ -6,6 +6,10 @@ import { Repository } from './storage/repository.js';
 import { AuthService } from './core/auth.js';
 import { createModelProvider } from './model/provider.js';
 import { ConversationService } from './core/conversation.js';
+import { CommandExecutor } from './agent/executor.js';
+import { GitHubService } from './agent/github.js';
+import { IntentDetector } from './agent/intent.js';
+import { AgentRunner } from './agent/runner.js';
 import { createBot } from './telegram/bot.js';
 
 async function main(): Promise<void> {
@@ -38,7 +42,27 @@ async function main(): Promise<void> {
   const model = createModelProvider(config, logger);
   const conversation = new ConversationService(config, repository, model);
 
-  const bot = createBot({ config, logger, auth, conversation, repository });
+  const executor = new CommandExecutor(
+    {
+      allowedCommands: config.AGENT_ALLOWED_COMMANDS,
+      timeoutMs: config.AGENT_COMMAND_TIMEOUT_MS,
+      workdir: config.AGENT_WORKDIR,
+    },
+    logger,
+  );
+  const github = new GitHubService(config, executor, logger);
+  const intent = new IntentDetector(model);
+  const agentRunner = new AgentRunner(config, repository, model, executor, github, logger);
+
+  const bot = createBot({
+    config,
+    logger,
+    auth,
+    conversation,
+    repository,
+    intent,
+    agentRunner,
+  });
 
   await bot.init();
   logger.info({ username: bot.botInfo.username }, 'bot initialized');

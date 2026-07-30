@@ -28,10 +28,17 @@ describe('AuthService', () => {
     expect(identity.role).toBe('user');
   });
 
-  it('only admins can approve', () => {
+  it('only the owner can approve', () => {
     const auth = new AuthService(config);
     expect(auth.canApprove(100)).toBe(true);
-    expect(auth.canApprove(200)).toBe(true);
+    expect(auth.canApprove(200)).toBe(false);
     expect(auth.canApprove(300)).toBe(false);
+  });
+
+  it('only the owner can request writes', () => {
+    const auth = new AuthService(config);
+    expect(auth.canRequestWrites(100)).toBe(true);
+    expect(auth.canRequestWrites(200)).toBe(false);
+    expect(auth.canRequestWrites(300)).toBe(false);
   });
 });

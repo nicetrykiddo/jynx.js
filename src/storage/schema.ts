@@ -90,8 +90,10 @@ export const approvals = pgTable(
     id: serial('id').primaryKey(),
     requestedBy: bigint('requested_by', { mode: 'number' }),
     kind: text('kind').notNull(),
+    stage: text('stage').notNull().default('idea'),
     summary: text('summary').notNull(),
     payload: jsonb('payload'),
+    taskId: integer('task_id'),
     status: text('status').notNull().default('pending'),
     decidedBy: bigint('decided_by', { mode: 'number' }),
     decidedAt: timestamp('decided_at', { withTimezone: true }),
@@ -110,4 +112,6 @@ export type Message = typeof messages.$inferSelect;
 export type NewMessage = typeof messages.$inferInsert;
 export type Memory = typeof memories.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
+export type NewTask = typeof tasks.$inferInsert;
 export type Approval = typeof approvals.$inferSelect;
+export type NewApproval = typeof approvals.$inferInsert;

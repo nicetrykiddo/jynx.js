@@ -117,6 +117,21 @@ const envSchema = z.object({
   MAGICA_MODEL: z.string().trim().min(1).default('claude_opus_4_8'),
   MAGICA_API_STYLE: z.enum(['openai', 'anthropic', 'custom']).default('openai'),
 
+  GITHUB_TOKEN: z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z.string().trim().min(1).optional(),
+  ),
+  GITHUB_REPO: z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z
+      .string()
+      .trim()
+      .regex(/^[^/\s]+\/[^/\s]+$/, 'GITHUB_REPO must be in owner/name format')
+      .optional(),
+  ),
+  GITHUB_DEFAULT_BRANCH: z.string().trim().min(1).default('main'),
+  AGENT_WORKDIR: z.string().trim().min(1).default('.jynx-work'),
+
   DATABASE_URL: z
     .string()
     .trim()
@@ -150,6 +165,20 @@ const envSchema = z.object({
 
   ENABLE_SELF_MODIFICATION: booleanFromEnvironment(false),
   ENABLE_AUTOMATIC_RESTART: booleanFromEnvironment(false),
+
+  AGENT_COMMAND_TIMEOUT_MS: integerFromEnvironment(300_000, 1_000, 3_600_000),
+  AGENT_ALLOWED_COMMANDS: z
+    .string()
+    .trim()
+    .default('git,npm,npx,node,pnpm,yarn,ls,cat,rg,grep,mkdir,touch,cp,mv,rm,echo,test,vitest,tsc,eslint,prettier')
+    .transform((raw) => [
+      ...new Set(
+        raw
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean),
+      ),
+    ]),
 });
 
 export type AppConfig = z.infer<typeof envSchema>;

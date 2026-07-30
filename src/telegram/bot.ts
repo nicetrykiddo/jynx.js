@@ -6,6 +6,10 @@ import { ConversationService } from '../core/conversation.js';
 import { Reporter } from '../core/reporter.js';
 import { decideParticipation, type ParticipationMode } from '../core/participation.js';
 import type { Repository } from '../storage/repository.js';
+import { ProposalService } from '../agent/proposals.js';
+import { ApprovalFlow } from '../agent/approval-flow.js';
+import type { IntentDetector } from '../agent/intent.js';
+import type { AgentRunner } from '../agent/runner.js';
 
 export interface BotDependencies {
   config: AppConfig;
@@ -13,6 +17,8 @@ export interface BotDependencies {
   auth: AuthService;
   conversation: ConversationService;
   repository: Repository;
+  intent: IntentDetector;
+  agentRunner: AgentRunner;
 }
 
 function chatType(ctx: Context): 'private' | 'group' | 'supergroup' | 'channel' {
@@ -47,9 +53,11 @@ async function isMentioned(ctx: Context, botUsername: string): Promise<boolean> 
 }
 
 export function createBot(deps: BotDependencies): Bot {
-  const { config, logger, auth, conversation, repository } = deps;
+  const { config, logger, auth, conversation, repository, intent, agentRunner } = deps;
   const bot = new Bot(config.TELEGRAM_BOT_TOKEN);
   const reporter = new Reporter(bot.api, config, logger);
+  const proposals = new ProposalService({ repository, reporter, intent, runner: agentRunner, logger });
+  const approvalFlow = new ApprovalFlow({ config, auth, repository, reporter, runner: agentRunner, logger });
   const lastReplyAt = new Map<number, number>();
 
   bot.catch((error) => {
@@ -76,6 +84,53 @@ export function createBot(deps: BotDependencies): Bot {
     }
     const identity = auth.identify(ctx.from.id);
     await ctx.reply(`id: ${identity.userId}\nrole: ${identity.role}`);
+  });
+
+  const parseApprovalId = (raw: string): number | null => {
+    const value = Number(raw.trim());
+    return Number.isInteger(value) && value > 0 ? value : null;
+  };
+
+  bot.command('approve', async (ctx) => {
+    if (!ctx.from) {
+      return;
+    }
+    if (!auth.isOwner(ctx.from.id)) {
+      await ctx.reply('only the owner can approve.');
+      return;
+    }
+    const id = parseApprovalId((ctx.match ?? '').toString());
+    if (id === null) {
+      await ctx.reply('usage: /approve <id>');
+      return;
+    }
+    try {
+      const result = await approvalFlow.approve(ctx.from.id, id);
+      await ctx.reply(result.reply);
+    } catch (error) {
+      await reporter.reportError('approve', error);
+    }
+  });
+
+  bot.command('reject', async (ctx) => {
+    if (!ctx.from) {
+      return;
+    }
+    if (!auth.isOwner(ctx.from.id)) {
+      await ctx.reply('only the owner can reject.');
+      return;
+    }
+    const id = parseApprovalId((ctx.match ?? '').toString());
+    if (id === null) {
+      await ctx.reply('usage: /reject <id>');
+      return;
+    }
+    try {
+      const result = await approvalFlow.reject(ctx.from.id, id);
+      await ctx.reply(result.reply);
+    } catch (error) {
+      await reporter.reportError('reject', error);
+    }
   });
 
   bot.command('mode', async (ctx) => {
@@ -210,6 +265,12 @@ export function createBot(deps: BotDependencies): Bot {
       });
     } catch (error) {
       await reporter.reportError('conversation.respond', error);
+    }
+
+    try {
+      await proposals.considerMessage({ userId: ctx.from.id, text });
+    } catch (error) {
+      await reporter.reportError('proposals.consider', error);
     }
   });
 

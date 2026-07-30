@@ -50,6 +50,18 @@ export class Reporter {
     }
   }
 
+  public async postProposal(text: string): Promise<void> {
+    if (!this.config.JYNX_APPROVAL_CHAT_ID) {
+      this.logger.warn('proposal posted but JYNX_APPROVAL_CHAT_ID is not configured');
+      return;
+    }
+    try {
+      await this.api.sendMessage(this.config.JYNX_APPROVAL_CHAT_ID, text.slice(0, 3500));
+    } catch (sendError) {
+      this.logger.error({ err: sendError }, 'failed to post proposal');
+    }
+  }
+
   public async info(text: string): Promise<void> {
     if (!this.config.JYNX_ERROR_CHAT_ID) {
       return;
