@@ -20,6 +20,6 @@ describe('redactSecrets', () => {
     const input = { outer: { password: 'hunter2' }, list: [{ authorization: 'Bearer x' }] };
     const output = redactSecrets(input);
     expect(output.outer.password).toBe('[redacted]');
-    expect(output.list[0].authorization).toBe('[redacted]');
+    expect(output.list[0]?.authorization).toBe('[redacted]');
   });
 });

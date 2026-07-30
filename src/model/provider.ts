@@ -5,80 +5,51 @@ import type {
   CompletionRequest,
   CompletionResult,
   ModelProvider,
-  ToolCall,
-  ToolDefinition,
 } from './types.js';
 
-interface OpenAiToolCall {
+interface RunResponse {
+  runId?: string;
   id?: string;
-  function?: { name?: string; arguments?: string };
 }
 
-interface OpenAiChoice {
-  message?: {
-    content?: string | null;
-    tool_calls?: OpenAiToolCall[];
-  };
-  finish_reason?: string;
+interface PollResponse {
+  status?: string;
+  output?:
+    | {
+        output?: string;
+        [key: string]: unknown;
+      }
+    | null;
+  error?: unknown;
 }
 
-interface OpenAiResponse {
-  choices?: OpenAiChoice[];
-}
+const TERMINAL_STATUSES = new Set(['COMPLETED', 'SUCCEEDED', 'FAILED', 'ERROR', 'CANCELLED']);
+const FAILED_STATUSES = new Set(['FAILED', 'ERROR', 'CANCELLED']);
 
-function toOpenAiMessages(messages: ChatMessage[]): unknown[] {
-  return messages.map((message) => {
-    if (message.role === 'tool') {
-      return {
-        role: 'tool',
-        content: message.content,
-        tool_call_id: message.toolCallId,
-      };
-    }
-    return { role: message.role, content: message.content, name: message.name };
-  });
-}
+function splitMessages(messages: ChatMessage[]): { systemPrompt: string; prompt: string } {
+  const systemParts: string[] = [];
+  const conversation: string[] = [];
 
-function toOpenAiTools(tools: ToolDefinition[]): unknown[] {
-  return tools.map((tool) => ({
-    type: 'function',
-    function: {
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.parameters,
-    },
-  }));
-}
-
-function parseToolCalls(rawCalls: OpenAiToolCall[] | undefined): ToolCall[] {
-  if (!rawCalls) {
-    return [];
-  }
-
-  const calls: ToolCall[] = [];
-  for (const raw of rawCalls) {
-    const name = raw.function?.name;
-    if (!name) {
+  for (const message of messages) {
+    if (message.role === 'system') {
+      systemParts.push(message.content);
       continue;
     }
-
-    let args: Record<string, unknown> = {};
-    const rawArgs = raw.function?.arguments;
-    if (typeof rawArgs === 'string' && rawArgs.trim().length > 0) {
-      try {
-        const parsed = JSON.parse(rawArgs);
-        if (parsed && typeof parsed === 'object') {
-          args = parsed as Record<string, unknown>;
-        }
-      } catch {
-        args = {};
-      }
+    if (message.role === 'assistant') {
+      conversation.push(`Jynx: ${message.content}`);
+      continue;
     }
-
-    calls.push({ id: raw.id ?? name, name, arguments: args });
+    if (message.role === 'tool') {
+      conversation.push(`Tool (${message.name ?? 'result'}): ${message.content}`);
+      continue;
+    }
+    conversation.push(message.content);
   }
 
-  return calls;
+  return {
+    systemPrompt: systemParts.join('\n\n'),
+    prompt: conversation.join('\n'),
+  };
 }
 
 async function delay(ms: number): Promise<void> {
@@ -97,26 +68,24 @@ export class MagicaProvider implements ModelProvider {
   ) {}
 
   public async complete(request: CompletionRequest): Promise<CompletionResult> {
-    const url = `${this.config.MAGICA_BASE_URL.replace(/\/$/, '')}/chat/completions`;
-    const body: Record<string, unknown> = {
-      model: this.config.MAGICA_MODEL,
-      messages: toOpenAiMessages(request.messages),
+    const { systemPrompt, prompt } = splitMessages(request.messages);
+    const input: Record<string, unknown> = {
+      prompt: prompt.length > 0 ? prompt : '(no message)',
       temperature: request.temperature ?? 0.8,
     };
 
-    if (request.maxTokens) {
-      body.max_tokens = request.maxTokens;
+    if (systemPrompt.length > 0) {
+      input.system_prompt = systemPrompt;
     }
 
-    if (request.tools && request.tools.length > 0) {
-      body.tools = toOpenAiTools(request.tools);
-      body.tool_choice = 'auto';
+    if (request.maxTokens) {
+      input.max_tokens = request.maxTokens;
     }
 
     let lastError: unknown;
     for (let attempt = 0; attempt <= this.config.MODEL_MAX_RETRIES; attempt += 1) {
       try {
-        return await this.request(url, body);
+        return await this.runAndPoll(input);
       } catch (error) {
         lastError = error;
         this.logger.warn(
@@ -132,38 +101,92 @@ export class MagicaProvider implements ModelProvider {
     throw lastError instanceof Error ? lastError : new Error('model request failed');
   }
 
-  private async request(url: string, body: unknown): Promise<CompletionResult> {
+  private get baseUrl(): string {
+    return this.config.MAGICA_BASE_URL.replace(/\/$/, '');
+  }
+
+  private async startRun(input: Record<string, unknown>): Promise<string> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.config.MODEL_TIMEOUT_MS);
 
     try {
-      const response = await fetch(url, {
+      const response = await fetch(`${this.baseUrl}/nodes/${this.config.MAGICA_MODEL}/run`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${this.config.MAGICA_API_KEY}`,
         },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ input }),
         signal: controller.signal,
       });
 
       if (!response.ok) {
         const text = await response.text().catch(() => '');
-        throw new Error(`model responded ${response.status}: ${text.slice(0, 500)}`);
+        throw new Error(`model run responded ${response.status}: ${text.slice(0, 300)}`);
       }
 
-      const data = (await response.json()) as OpenAiResponse;
-      const choice = data.choices?.[0];
-      const message = choice?.message;
-
-      return {
-        content: (message?.content ?? '').trim(),
-        toolCalls: parseToolCalls(message?.tool_calls),
-        finishReason: choice?.finish_reason ?? 'stop',
-      };
+      const data = (await response.json()) as RunResponse;
+      const runId = data.runId ?? data.id;
+      if (!runId) {
+        throw new Error('model run did not return a runId');
+      }
+      return runId;
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  private async pollRun(runId: string): Promise<CompletionResult> {
+    const deadline = Date.now() + this.config.MODEL_TIMEOUT_MS;
+
+    while (Date.now() < deadline) {
+      await delay(2000);
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+
+      let data: PollResponse;
+      try {
+        const response = await fetch(`${this.baseUrl}/nodes/runs/${runId}`, {
+          headers: { Authorization: `Bearer ${this.config.MAGICA_API_KEY}` },
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          const text = await response.text().catch(() => '');
+          throw new Error(`model poll responded ${response.status}: ${text.slice(0, 300)}`);
+        }
+
+        data = (await response.json()) as PollResponse;
+      } finally {
+        clearTimeout(timeout);
+      }
+
+      const status = (data.status ?? '').toUpperCase();
+      if (!TERMINAL_STATUSES.has(status)) {
+        continue;
+      }
+
+      if (FAILED_STATUSES.has(status)) {
+        const detail =
+          typeof data.error === 'string' ? data.error : JSON.stringify(data.error ?? {});
+        throw new Error(`model run ${status}: ${detail.slice(0, 300)}`);
+      }
+
+      const content = typeof data.output?.output === 'string' ? data.output.output : '';
+      return {
+        content: content.trim(),
+        toolCalls: [],
+        finishReason: 'stop',
+      };
+    }
+
+    throw new Error('model run timed out while polling');
+  }
+
+  private async runAndPoll(input: Record<string, unknown>): Promise<CompletionResult> {
+    const runId = await this.startRun(input);
+    return this.pollRun(runId);
   }
 }
 
