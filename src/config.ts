@@ -134,6 +134,9 @@ const envSchema = z.object({
 
   JYNX_TIMEZONE: z.string().trim().min(1).default('UTC'),
 
+  ENABLE_OWNER_INTROSPECTION: booleanFromEnvironment(true),
+  INTROSPECTION_ROOT: z.string().trim().min(1).default('.'),
+
   WEB_SEARCH_API_KEY: z.preprocess(
     (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
     z.string().trim().min(1).optional(),

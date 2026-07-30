@@ -272,6 +272,34 @@ export class Repository {
     return row;
   }
 
+  public async getDbOverview(): Promise<{
+    chats: number;
+    users: number;
+    messages: number;
+    memories: number;
+    tasks: number;
+    approvals: number;
+    pendingApprovals: number;
+  }> {
+    const count = async (table: typeof chats | typeof users | typeof messages | typeof memories | typeof tasks | typeof approvals): Promise<number> => {
+      const rows = await this.db.select({ count: sql<number>`count(*)::int` }).from(table);
+      return rows[0]?.count ?? 0;
+    };
+    const pendingRows = await this.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(approvals)
+      .where(eq(approvals.status, 'pending'));
+    return {
+      chats: await count(chats),
+      users: await count(users),
+      messages: await count(messages),
+      memories: await count(memories),
+      tasks: await count(tasks),
+      approvals: await count(approvals),
+      pendingApprovals: pendingRows[0]?.count ?? 0,
+    };
+  }
+
   public async advanceApprovalStage(id: number, stage: string, taskId?: number | null): Promise<void> {
     await this.db
       .update(approvals)

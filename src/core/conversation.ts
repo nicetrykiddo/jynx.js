@@ -5,6 +5,7 @@ import type { ModelProvider, ChatMessage } from '../model/types.js';
 import type { Repository } from '../storage/repository.js';
 import type { Message } from '../storage/schema.js';
 import type { WebSearchService } from '../agent/websearch.js';
+import type { IntrospectionService } from '../agent/introspection.js';
 
 export interface ConversationInput {
   identity: Identity;
@@ -12,6 +13,7 @@ export interface ConversationInput {
   chatType: 'private' | 'group' | 'supergroup' | 'channel';
   userText: string;
   displayName: string;
+  trustedIntrospection?: boolean;
 }
 
 export interface ConversationResult {
@@ -41,6 +43,7 @@ export class ConversationService {
     private readonly repository: Repository,
     private readonly model: ModelProvider,
     private readonly webSearch?: WebSearchService,
+    private readonly introspection?: IntrospectionService,
   ) {}
 
   private referencesPast(text: string): boolean {
@@ -103,6 +106,55 @@ export class ConversationService {
     return triggers.some((t) => lower.includes(t)) || /\b20\d{2}\b/.test(lower);
   }
 
+  private detectIntrospection(
+    text: string,
+  ): { kind: 'db' } | { kind: 'list'; dir: string } | { kind: 'file'; path: string } | null {
+    const lower = text.toLowerCase();
+    const fileMatch = text.match(/(?:src\/|tests\/|package\.json|tsconfig[^\s]*)[\w./-]*/);
+    if (fileMatch && (lower.includes('file') || lower.includes('code') || lower.includes('read') || lower.includes('show'))) {
+      return { kind: 'file', path: fileMatch[0] };
+    }
+    if (
+      (lower.includes('list') || lower.includes('what files') || lower.includes('directory') || lower.includes('folder')) &&
+      (lower.includes('file') || lower.includes('dir') || lower.includes('folder') || lower.includes('code'))
+    ) {
+      const dirMatch = text.match(/(?:src|tests)[\w./-]*/);
+      return { kind: 'list', dir: dirMatch ? dirMatch[0] : '.' };
+    }
+    if (
+      (lower.includes('db') || lower.includes('database') || lower.includes('data')) &&
+      (lower.includes('how many') || lower.includes('count') || lower.includes('overview') || lower.includes('stats') || lower.includes('info') || lower.includes('content'))
+    ) {
+      return { kind: 'db' };
+    }
+    return null;
+  }
+
+  private async gatherIntrospection(
+    request: { kind: 'db' } | { kind: 'list'; dir: string } | { kind: 'file'; path: string },
+  ): Promise<string> {
+    if (!this.introspection) {
+      return '';
+    }
+    if (request.kind === 'db') {
+      const o = await this.introspection.dbOverview();
+      return [
+        `chats: ${o.chats}`,
+        `users: ${o.users}`,
+        `messages: ${o.messages}`,
+        `memories: ${o.memories}`,
+        `tasks: ${o.tasks}`,
+        `approvals: ${o.approvals} (pending: ${o.pendingApprovals})`,
+      ].join('\n');
+    }
+    if (request.kind === 'list') {
+      const files = this.introspection.listOwnFiles(request.dir);
+      return `${request.dir}:\n${files.join('\n')}`;
+    }
+    const content = this.introspection.readOwnFile(request.path);
+    return `${request.path}:\n${content}`;
+  }
+
   private currentTime(): string {
     try {
       return new Intl.DateTimeFormat('en-US', {
@@ -133,6 +185,7 @@ export class ConversationService {
       memories,
       currentTime: this.currentTime(),
       timezone: this.config.JYNX_TIMEZONE,
+      trustedChannel: input.trustedIntrospection ?? false,
     });
 
     const messages: ChatMessage[] = [
@@ -191,6 +244,26 @@ export class ConversationService {
         }
       } catch {
         // web search is best-effort; ignore failures
+      }
+    }
+
+    if (input.trustedIntrospection && this.introspection?.isEnabled) {
+      try {
+        const request = this.detectIntrospection(input.userText);
+        if (request) {
+          const context = await this.gatherIntrospection(request);
+          if (context) {
+            messages.push({
+              role: 'system',
+              content: `Private self-inspection results (owner-only trusted channel; never reveal outside this chat):\n${context}`,
+            });
+          }
+        }
+      } catch (error) {
+        messages.push({
+          role: 'system',
+          content: `Self-inspection failed: ${error instanceof Error ? error.message : String(error)}`,
+        });
       }
     }
 

@@ -277,12 +277,17 @@ export function createBot(deps: BotDependencies): Bot {
 
     try {
       await ctx.replyWithChatAction('typing');
+      const isTrustedChat =
+        (isPrivate && identity.isOwner) ||
+        ctx.chat.id === config.JYNX_APPROVAL_CHAT_ID ||
+        ctx.chat.id === config.JYNX_ERROR_CHAT_ID;
       const result = await conversation.respond({
         identity,
         chatId: ctx.chat.id,
         chatType: type,
         userText: text,
         displayName: name,
+        trustedIntrospection: isTrustedChat,
       });
 
       const sent = await ctx.reply(result.reply, {
