@@ -43,6 +43,42 @@ export class ConversationService {
     private readonly webSearch?: WebSearchService,
   ) {}
 
+  private referencesPast(text: string): boolean {
+    const lower = text.toLowerCase();
+    const triggers = [
+      'earlier',
+      'before',
+      'yesterday',
+      'last time',
+      'you said',
+      'i said',
+      'we talked',
+      'remember',
+      'that thing',
+      'back then',
+      'previously',
+      'the other day',
+      'who said',
+      'what did',
+    ];
+    return triggers.some((t) => lower.includes(t));
+  }
+
+  private searchTerms(text: string): string[] {
+    const stop = new Set([
+      'the','a','an','and','or','but','if','of','to','in','on','at','for','with','about','you','i','we','said','earlier','before','remember','what','who','did','that','this','was','were','is','are','do','does','me','my','your',
+    ]);
+    return [
+      ...new Set(
+        text
+          .toLowerCase()
+          .replace(/[^a-z0-9\s]/g, ' ')
+          .split(/\s+/)
+          .filter((w) => w.length > 3 && !stop.has(w)),
+      ),
+    ].slice(0, 5);
+  }
+
   private needsFactCheck(text: string): boolean {
     const lower = text.toLowerCase();
     const triggers = [
@@ -107,6 +143,39 @@ export class ConversationService {
     const userContent = isGroup
       ? `${input.displayName}: ${input.userText}`
       : input.userText;
+
+    if (this.referencesPast(input.userText)) {
+      try {
+        const seen = new Set(history.map((m) => m.id));
+        const terms = this.searchTerms(input.userText);
+        const found: Message[] = [];
+        for (const term of terms) {
+          const rows = await this.repository.searchMessages(input.chatId, term, 10);
+          for (const row of rows) {
+            if (!seen.has(row.id)) {
+              seen.add(row.id);
+              found.push(row);
+            }
+          }
+        }
+        if (found.length > 0) {
+          const recalled = found
+            .slice(-15)
+            .map((m) => {
+              const meta = (m.metadata ?? {}) as { displayName?: string };
+              const who = m.role === 'assistant' ? 'Jynx' : (meta.displayName ?? 'someone');
+              return `- ${who}: ${m.content.slice(0, 300)}`;
+            })
+            .join('\n');
+          messages.push({
+            role: 'system',
+            content: `Relevant earlier messages from this chat you recalled (use naturally, do not quote verbatim unless asked):\n${recalled}`,
+          });
+        }
+      } catch {
+        // history recall is best-effort; ignore failures
+      }
+    }
 
     if (this.webSearch?.isConfigured && this.needsFactCheck(input.userText)) {
       try {

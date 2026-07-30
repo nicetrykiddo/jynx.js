@@ -91,6 +91,39 @@ export class Repository {
     return rows.reverse();
   }
 
+  public async searchMessages(
+    chatId: number,
+    query: string,
+    limit = 20,
+  ): Promise<Message[]> {
+    const pattern = `%${query.replace(/[%_]/g, (m) => `\\${m}`)}%`;
+    const rows = await this.db
+      .select()
+      .from(messages)
+      .where(and(eq(messages.chatId, chatId), sql`${messages.content} ilike ${pattern}`))
+      .orderBy(desc(messages.createdAt))
+      .limit(limit);
+    return rows.reverse();
+  }
+
+  public async getMessagesInRange(
+    chatId: number,
+    limit: number,
+    beforeId?: number,
+  ): Promise<Message[]> {
+    const conditions = [eq(messages.chatId, chatId)];
+    if (beforeId !== undefined) {
+      conditions.push(sql`${messages.id} < ${beforeId}`);
+    }
+    const rows = await this.db
+      .select()
+      .from(messages)
+      .where(and(...conditions))
+      .orderBy(desc(messages.createdAt))
+      .limit(limit);
+    return rows.reverse();
+  }
+
   public async countRecentAssistantMessages(
     chatId: number,
     sinceMs: number,
