@@ -133,6 +133,36 @@ export function createBot(deps: BotDependencies): Bot {
     }
   });
 
+  bot.callbackQuery(/^(approve|reject):(\d+)$/, async (ctx) => {
+    const from = ctx.from;
+    if (!from) {
+      await ctx.answerCallbackQuery();
+      return;
+    }
+    if (!auth.isOwner(from.id)) {
+      await ctx.answerCallbackQuery({ text: 'only the owner can decide.', show_alert: true });
+      return;
+    }
+    const action = ctx.match[1];
+    const id = Number(ctx.match[2]);
+    try {
+      const result =
+        action === 'approve'
+          ? await approvalFlow.approve(from.id, id)
+          : await approvalFlow.reject(from.id, id);
+      await ctx.answerCallbackQuery({ text: result.reply.slice(0, 200) });
+      try {
+        await ctx.editMessageReplyMarkup({ reply_markup: undefined });
+      } catch {
+        // markup may already be gone; ignore
+      }
+      await ctx.reply(result.reply);
+    } catch (error) {
+      await ctx.answerCallbackQuery({ text: 'something broke, check logs.', show_alert: true });
+      await reporter.reportError(`callback.${action}`, error);
+    }
+  });
+
   bot.command('mode', async (ctx) => {
     if (!ctx.from || !ctx.chat) {
       return;
@@ -213,6 +243,7 @@ export function createBot(deps: BotDependencies): Bot {
 
     const now = Date.now();
     const lastAt = lastReplyAt.get(ctx.chat.id) ?? 0;
+    const secondsSinceLastReply = (now - lastAt) / 1000;
     let recentAssistantCount = 0;
     if (isGroup) {
       try {
@@ -225,13 +256,19 @@ export function createBot(deps: BotDependencies): Bot {
       }
     }
 
+    const recentlyEngaged =
+      lastAt > 0 && secondsSinceLastReply <= config.PROACTIVE_REPLY_COOLDOWN_SECONDS * 2;
+    const mentionsBotByName = /\bjynx\b/i.test(text);
+
     const decision = decideParticipation({
       mode,
       isPrivate,
       isMentioned: mentioned,
       isReplyToBot,
       recentAssistantCount,
-      secondsSinceLastReply: (now - lastAt) / 1000,
+      secondsSinceLastReply,
+      recentlyEngaged,
+      mentionsBotByName,
     });
 
     if (!decision.shouldConsiderReply) {

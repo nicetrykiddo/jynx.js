@@ -38,9 +38,9 @@ export class ProposalService {
       '',
       detected.summary,
       '',
-      `Owner: /approve ${approval.id} to plan it, /reject ${approval.id} to drop it.`,
+      'Tap a button below to plan it or drop it.',
     ].join('\n');
 
-    await this.deps.reporter.postProposal(text);
+    await this.deps.reporter.postProposal(text, approval.id);
   }
 }

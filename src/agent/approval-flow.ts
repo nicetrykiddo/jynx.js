@@ -97,10 +97,10 @@ export class ApprovalFlow {
       'tests:',
       ...plan.testPlan.map((s) => `- ${s}`),
       '',
-      `Owner: /approve ${planApproval.id} to build it, /reject ${planApproval.id} to drop it.`,
+      'Tap a button below to build it or drop it.',
     ].join('\n');
 
-    await this.deps.reporter.postProposal(text);
+    await this.deps.reporter.postProposal(text, planApproval.id);
     return { reply: `idea #${approvalId} approved. drafted plan #${planApproval.id}.` };
   }
 

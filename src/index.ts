@@ -8,6 +8,7 @@ import { createModelProvider } from './model/provider.js';
 import { ConversationService } from './core/conversation.js';
 import { CommandExecutor } from './agent/executor.js';
 import { GitHubService } from './agent/github.js';
+import { WebSearchService } from './agent/websearch.js';
 import { IntentDetector } from './agent/intent.js';
 import { AgentRunner } from './agent/runner.js';
 import { createBot } from './telegram/bot.js';
@@ -40,7 +41,8 @@ async function main(): Promise<void> {
   const repository = new Repository(storage.db);
   const auth = new AuthService(config);
   const model = createModelProvider(config, logger);
-  const conversation = new ConversationService(config, repository, model);
+  const webSearch = new WebSearchService(config, logger);
+  const conversation = new ConversationService(config, repository, model, webSearch);
 
   const executor = new CommandExecutor(
     {

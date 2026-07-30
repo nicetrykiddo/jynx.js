@@ -4,6 +4,7 @@ import { buildSystemPrompt } from './persona.js';
 import type { ModelProvider, ChatMessage } from '../model/types.js';
 import type { Repository } from '../storage/repository.js';
 import type { Message } from '../storage/schema.js';
+import type { WebSearchService } from '../agent/websearch.js';
 
 export interface ConversationInput {
   identity: Identity;
@@ -32,11 +33,51 @@ export class ConversationService {
   public constructor(
     private readonly config: Pick<
       AppConfig,
-      'MAX_HISTORY_MESSAGES' | 'MAX_GROUP_CONTEXT_MESSAGES' | 'MAX_RESPONSE_CHARS'
+      | 'MAX_HISTORY_MESSAGES'
+      | 'MAX_GROUP_CONTEXT_MESSAGES'
+      | 'MAX_RESPONSE_CHARS'
+      | 'JYNX_TIMEZONE'
     >,
     private readonly repository: Repository,
     private readonly model: ModelProvider,
+    private readonly webSearch?: WebSearchService,
   ) {}
+
+  private needsFactCheck(text: string): boolean {
+    const lower = text.toLowerCase();
+    const triggers = [
+      'latest',
+      'news',
+      'today',
+      'current',
+      'right now',
+      'price',
+      'score',
+      'weather',
+      'who is',
+      'when is',
+      'when did',
+      'how old',
+      'release date',
+      'is it true',
+      'fact check',
+      'this year',
+      'recently',
+    ];
+    return triggers.some((t) => lower.includes(t)) || /\b20\d{2}\b/.test(lower);
+  }
+
+  private currentTime(): string {
+    try {
+      return new Intl.DateTimeFormat('en-US', {
+        dateStyle: 'full',
+        timeStyle: 'short',
+        timeZone: this.config.JYNX_TIMEZONE,
+      }).format(new Date());
+    } catch {
+      return new Date().toISOString();
+    }
+  }
 
   public async respond(input: ConversationInput): Promise<ConversationResult> {
     const isGroup = input.chatType === 'group' || input.chatType === 'supergroup';
@@ -54,6 +95,8 @@ export class ConversationService {
       identity: input.identity,
       chatType: input.chatType,
       memories,
+      currentTime: this.currentTime(),
+      timezone: this.config.JYNX_TIMEZONE,
     });
 
     const messages: ChatMessage[] = [
@@ -64,6 +107,24 @@ export class ConversationService {
     const userContent = isGroup
       ? `${input.displayName}: ${input.userText}`
       : input.userText;
+
+    if (this.webSearch?.isConfigured && this.needsFactCheck(input.userText)) {
+      try {
+        const results = await this.webSearch.search(input.userText);
+        if (results.length > 0) {
+          const context = results
+            .map((r) => `- ${r.title}: ${r.snippet} (${r.url})`)
+            .join('\n');
+          messages.push({
+            role: 'system',
+            content: `Web search results for the user's message (use to fact-check, cite naturally, do not dump raw):\n${context}`,
+          });
+        }
+      } catch {
+        // web search is best-effort; ignore failures
+      }
+    }
+
     messages.push({ role: 'user', content: userContent });
 
     const result = await this.model.complete({ messages, temperature: 0.85 });

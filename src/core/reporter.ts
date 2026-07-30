@@ -1,4 +1,5 @@
 import type { Api } from 'grammy';
+import { InlineKeyboard } from 'grammy';
 import type { AppConfig } from '../config.js';
 import type { Logger } from './logger.js';
 
@@ -50,13 +51,21 @@ export class Reporter {
     }
   }
 
-  public async postProposal(text: string): Promise<void> {
+  public async postProposal(text: string, approvalId?: number): Promise<void> {
     if (!this.config.JYNX_APPROVAL_CHAT_ID) {
       this.logger.warn('proposal posted but JYNX_APPROVAL_CHAT_ID is not configured');
       return;
     }
+    const keyboard =
+      approvalId === undefined
+        ? undefined
+        : new InlineKeyboard()
+            .text('✅ Approve', `approve:${approvalId}`)
+            .text('❌ Reject', `reject:${approvalId}`);
     try {
-      await this.api.sendMessage(this.config.JYNX_APPROVAL_CHAT_ID, text.slice(0, 3500));
+      await this.api.sendMessage(this.config.JYNX_APPROVAL_CHAT_ID, text.slice(0, 3500), {
+        reply_markup: keyboard,
+      });
     } catch (sendError) {
       this.logger.error({ err: sendError }, 'failed to post proposal');
     }

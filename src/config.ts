@@ -132,6 +132,19 @@ const envSchema = z.object({
   GITHUB_DEFAULT_BRANCH: z.string().trim().min(1).default('main'),
   AGENT_WORKDIR: z.string().trim().min(1).default('.jynx-work'),
 
+  JYNX_TIMEZONE: z.string().trim().min(1).default('UTC'),
+
+  WEB_SEARCH_API_KEY: z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z.string().trim().min(1).optional(),
+  ),
+  WEB_SEARCH_BASE_URL: z
+    .string()
+    .trim()
+    .url('WEB_SEARCH_BASE_URL must be a valid URL')
+    .default('https://api.tavily.com'),
+  WEB_SEARCH_MAX_RESULTS: integerFromEnvironment(5, 1, 20),
+
   DATABASE_URL: z
     .string()
     .trim()

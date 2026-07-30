@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { Logger } from '../core/logger.js';
 
@@ -71,9 +72,14 @@ export class CommandExecutor {
 
     this.logger.info({ command, args }, 'executor run');
 
+    const cwd = path.resolve(this.config.workdir);
+    if (!existsSync(cwd)) {
+      mkdirSync(cwd, { recursive: true });
+    }
+
     return new Promise<CommandResult>((resolve, reject) => {
       const child = spawn(command, args, {
-        cwd: path.resolve(this.config.workdir),
+        cwd,
         env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
         shell: false,
       });
@@ -93,6 +99,11 @@ export class CommandExecutor {
       });
       child.on('error', (error) => {
         clearTimeout(timer);
+        const err = error as { code?: string };
+        if (err.code === 'ENOENT') {
+          reject(new Error(`command not found on host: ${command} (is it installed and on PATH?)`));
+          return;
+        }
         reject(error);
       });
       child.on('close', (code) => {

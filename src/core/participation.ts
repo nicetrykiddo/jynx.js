@@ -7,6 +7,8 @@ export interface ParticipationInput {
   isReplyToBot: boolean;
   recentAssistantCount: number;
   secondsSinceLastReply: number;
+  recentlyEngaged: boolean;
+  mentionsBotByName: boolean;
 }
 
 export interface ParticipationDecision {
@@ -32,11 +34,19 @@ export function decideParticipation(input: ParticipationInput): ParticipationDec
     return { shouldConsiderReply: true, forced: true, reason: 'mentioned or replied to' };
   }
 
+  if (input.mentionsBotByName && input.recentlyEngaged) {
+    return { shouldConsiderReply: true, forced: false, reason: 'named while recently engaged' };
+  }
+
   if (input.mode === 'silent' || input.mode === 'mentioned_only') {
     return { shouldConsiderReply: false, forced: false, reason: 'mode does not allow proactive replies' };
   }
 
   let chance = PROACTIVE_BASE_CHANCE[input.mode];
+
+  if (input.recentlyEngaged) {
+    chance = Math.min(1, chance * 2.5);
+  }
 
   if (input.recentAssistantCount > 0) {
     chance /= 1 + input.recentAssistantCount;

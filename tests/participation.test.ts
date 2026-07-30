@@ -10,6 +10,8 @@ describe('decideParticipation', () => {
       isReplyToBot: false,
       recentAssistantCount: 0,
       secondsSinceLastReply: 0,
+      recentlyEngaged: false,
+      mentionsBotByName: false,
     });
     expect(decision.shouldConsiderReply).toBe(true);
     expect(decision.forced).toBe(true);
@@ -23,9 +25,25 @@ describe('decideParticipation', () => {
       isReplyToBot: false,
       recentAssistantCount: 0,
       secondsSinceLastReply: 999,
+      recentlyEngaged: false,
+      mentionsBotByName: false,
     });
     expect(decision.shouldConsiderReply).toBe(true);
     expect(decision.forced).toBe(true);
+  });
+
+  it('replies when named while recently engaged', () => {
+    const decision = decideParticipation({
+      mode: 'balanced',
+      isPrivate: false,
+      isMentioned: false,
+      isReplyToBot: false,
+      recentAssistantCount: 0,
+      secondsSinceLastReply: 30,
+      recentlyEngaged: true,
+      mentionsBotByName: true,
+    });
+    expect(decision.shouldConsiderReply).toBe(true);
   });
 
   it('never proactively replies in silent mode', () => {
@@ -36,6 +54,8 @@ describe('decideParticipation', () => {
       isReplyToBot: false,
       recentAssistantCount: 0,
       secondsSinceLastReply: 999,
+      recentlyEngaged: false,
+      mentionsBotByName: false,
     });
     expect(decision.shouldConsiderReply).toBe(false);
   });
