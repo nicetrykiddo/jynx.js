@@ -15,6 +15,7 @@ describe('ProposalService', () => {
       ]),
       createApproval: vi.fn(async (input: Record<string, unknown>) => ({ id: 2, ...input })),
       setApprovalMessageRef: vi.fn(async () => {}),
+      countRecentApprovalsForUser: vi.fn(async () => 0),
     };
     const intent = {
       detect: vi.fn(async () => ({
@@ -22,7 +23,7 @@ describe('ProposalService', () => {
         kind: 'action',
         title: 'Investigate the failure',
         summary: 'Find the cause and report it.',
-        access: 'public',
+        capabilities: [],
       })),
     };
     const reporter = {
@@ -38,6 +39,7 @@ describe('ProposalService', () => {
       intent: intent as never,
       runner: {} as never,
       logger: {} as never,
+      config: { MAX_PROPOSALS_PER_USER_PER_HOUR: 10 },
     });
 
     const result = await service.considerMessage({
@@ -63,12 +65,16 @@ describe('ProposalService', () => {
     );
     expect(repository.setApprovalMessageRef).toHaveBeenCalledWith(2, -100456, 9);
     expect(result).toEqual({ approvalId: 2, link: 'https://t.me/c/456/9' });
+    expect(repository.createApproval.mock.calls[0]?.[0]).toMatchObject({
+      payload: expect.objectContaining({ capabilities: [], trustedChannel: false }),
+    });
   });
 
   it('never creates an approval for private database access from an untrusted chat', async () => {
     const repository = {
       getRecentMessages: vi.fn(async () => []),
       createApproval: vi.fn(),
+      countRecentApprovalsForUser: vi.fn(async () => 0),
     };
     const intent = {
       detect: vi.fn(async () => ({
@@ -76,7 +82,7 @@ describe('ProposalService', () => {
         kind: 'action',
         title: 'Show database stats',
         summary: 'Check the database stats.',
-        access: 'trusted',
+        capabilities: ['db.stats'],
       })),
     };
     const reporter = { postProposal: vi.fn() };
@@ -86,6 +92,7 @@ describe('ProposalService', () => {
       intent: intent as never,
       runner: {} as never,
       logger: {} as never,
+      config: { MAX_PROPOSALS_PER_USER_PER_HOUR: 10 },
     });
 
     const result = await service.considerMessage({

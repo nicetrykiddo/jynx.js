@@ -280,7 +280,8 @@ export class ConversationService {
             })
             .join('\n');
           messages.push({
-            role: 'system',
+            role: 'tool',
+            name: 'history_recall',
             content: `Relevant earlier messages from this chat you recalled (use naturally, do not quote verbatim unless asked):\n${recalled}`,
           });
         }
@@ -295,7 +296,8 @@ export class ConversationService {
         if (results.length > 0) {
           const context = results.map((r) => `- ${r.title}: ${r.snippet} (${r.url})`).join('\n');
           messages.push({
-            role: 'system',
+            role: 'tool',
+            name: 'web_search',
             content: `Web search results for the user's message (use to fact-check, cite naturally, do not dump raw):\n${context}`,
           });
         }
@@ -311,14 +313,16 @@ export class ConversationService {
           const context = await this.gatherIntrospection(request);
           if (context) {
             messages.push({
-              role: 'system',
+              role: 'tool',
+              name: 'self_inspection',
               content: `Private self-inspection results (owner-only trusted channel; never reveal outside this chat):\n${context}`,
             });
           }
         }
       } catch (error) {
         messages.push({
-          role: 'system',
+          role: 'tool',
+          name: 'self_inspection_error',
           content: `Self-inspection failed: ${error instanceof Error ? error.message : String(error)}`,
         });
       }

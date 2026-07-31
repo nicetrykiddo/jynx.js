@@ -18,4 +18,19 @@ describe('IntrospectionService', () => {
 
     expect(() => service.readOwnFile('shortcut')).toThrow('path escapes project root');
   });
+
+  it('blocks environment variants and private-key files', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'maple-sensitive-'));
+    writeFileSync(path.join(root, '.env.production'), 'TOKEN=secret');
+    writeFileSync(path.join(root, 'server.pem'), 'secret');
+    const service = new IntrospectionService({
+      config: { ENABLE_OWNER_INTROSPECTION: true, INTROSPECTION_ROOT: root },
+      repository: {} as never,
+      logger: {} as never,
+    });
+
+    expect(() => service.readOwnFile('.env.production')).toThrow('off-limits');
+    expect(() => service.readOwnFile('server.pem')).toThrow('off-limits');
+    expect(service.listOwnFilesRecursive()).toEqual([]);
+  });
 });

@@ -21,6 +21,29 @@ export interface DbOverview {
 }
 
 const MAX_FILE_BYTES = 60_000;
+const SENSITIVE_NAMES = new Set([
+  'credentials.json',
+  'service-account.json',
+  'id_rsa',
+  'id_dsa',
+  'id_ecdsa',
+  'id_ed25519',
+]);
+
+function isSensitivePath(value: string): boolean {
+  return value
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter(Boolean)
+    .some(
+      (segment) =>
+        segment === '.git' ||
+        segment === 'node_modules' ||
+        segment.startsWith('.env') ||
+        SENSITIVE_NAMES.has(segment.toLowerCase()) ||
+        /\.(?:pem|key|p12|pfx)$/i.test(segment),
+    );
+}
 
 export class IntrospectionService {
   public constructor(private readonly deps: IntrospectionDeps) {}
@@ -47,13 +70,8 @@ export class IntrospectionService {
     if (!this.isEnabled) {
       throw new Error('introspection is disabled');
     }
-    const blocked = ['.env', 'node_modules', '.git'];
     const normalized = relativePath.replace(/\\/g, '/');
-    if (
-      blocked.some(
-        (b) => normalized === b || normalized.startsWith(`${b}/`) || normalized.includes(`/${b}/`),
-      )
-    ) {
+    if (isSensitivePath(normalized)) {
       throw new Error('that path is off-limits (secrets/internals)');
     }
     const resolved = this.resolveWithin(relativePath);
@@ -76,9 +94,7 @@ export class IntrospectionService {
     }
     const entries = readdirSync(resolved, { withFileTypes: true });
     return entries
-      .filter(
-        (e) => !['node_modules', '.git', '.env'].includes(e.name) && !e.name.startsWith('.env'),
-      )
+      .filter((e) => !isSensitivePath(e.name))
       .map((e) => (e.isDirectory() ? `${e.name}/` : e.name))
       .sort();
   }
@@ -95,7 +111,7 @@ export class IntrospectionService {
         if (
           entry.isSymbolicLink() ||
           ['node_modules', '.git', 'dist'].includes(entry.name) ||
-          (entry.name.startsWith('.env') && entry.name !== '.env.example')
+          isSensitivePath(entry.name)
         ) {
           continue;
         }

@@ -7,7 +7,6 @@ import { AuthService } from './core/auth.js';
 import { createModelProvider } from './model/provider.js';
 import { ConversationService } from './core/conversation.js';
 import { CommandExecutor } from './agent/executor.js';
-import { GitHubService } from './agent/github.js';
 import { WebSearchService } from './agent/websearch.js';
 import { IntrospectionService } from './agent/introspection.js';
 import { IntentDetector } from './agent/intent.js';
@@ -40,6 +39,8 @@ async function main(): Promise<void> {
   }
 
   const repository = new Repository(storage.db);
+  const abandoned = await repository.failAbandonedTasks('interrupted by process restart');
+  if (abandoned > 0) logger.warn({ count: abandoned }, 'recovered abandoned tasks');
   const auth = new AuthService(config);
   const model = createModelProvider(config, logger);
   const webSearch = new WebSearchService(config, logger);
@@ -54,14 +55,13 @@ async function main(): Promise<void> {
     },
     logger,
   );
-  const github = new GitHubService(config, executor, logger);
+  executor.cleanupAbandonedRuns();
   const intent = new IntentDetector(model);
   const agentRunner = new AgentRunner(
     config,
     repository,
     model,
     executor,
-    github,
     logger,
     webSearch,
     introspection,

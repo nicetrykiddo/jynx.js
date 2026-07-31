@@ -3,7 +3,7 @@ import type { AppConfig } from '../config.js';
 import type { Logger } from '../core/logger.js';
 import { AuthService, isTrustedOwnerChannel } from '../core/auth.js';
 import { ConversationService } from '../core/conversation.js';
-import { Reporter } from '../core/reporter.js';
+import { Reporter, telegramHtml } from '../core/reporter.js';
 import { decideParticipation, type ParticipationMode } from '../core/participation.js';
 import type { Repository } from '../storage/repository.js';
 import { ProposalService } from '../agent/proposals.js';
@@ -70,6 +70,42 @@ export function serializeTelegramContext(value: unknown): string {
   return raw.length > 12_000 ? `${raw.slice(0, 12_000)}…` : raw;
 }
 
+export function allowWithinWindow(
+  entries: Map<number, number[]>,
+  key: number,
+  limit: number,
+  windowMs: number,
+  now = Date.now(),
+): boolean {
+  if (!entries.has(key) && entries.size >= 10_000) {
+    const oldest = entries.keys().next().value;
+    if (oldest !== undefined) entries.delete(oldest);
+  }
+  const recent = (entries.get(key) ?? []).filter((timestamp) => timestamp > now - windowMs);
+  if (recent.length >= limit) {
+    entries.set(key, recent);
+    return false;
+  }
+  recent.push(now);
+  entries.set(key, recent);
+  return true;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function customEmojiReply(
+  text: string,
+  customEmojiIds: string[],
+  seed: number,
+  favored: boolean,
+): string {
+  if (customEmojiIds.length === 0 || seed % (favored ? 3 : 5) !== 0) return text;
+  const customEmojiId = customEmojiIds[Math.abs(seed) % customEmojiIds.length];
+  return `${text} <tg-emoji emoji-id="${customEmojiId}">❤️</tg-emoji>`;
+}
+
 export function createBot(deps: BotDependencies): Bot {
   const { config, logger, auth, conversation, repository, intent, agentRunner } = deps;
   const bot = new Bot(config.TELEGRAM_BOT_TOKEN);
@@ -80,6 +116,7 @@ export function createBot(deps: BotDependencies): Bot {
     intent,
     runner: agentRunner,
     logger,
+    config,
   });
   const approvalFlow = new ApprovalFlow({
     config,
@@ -91,6 +128,30 @@ export function createBot(deps: BotDependencies): Bot {
   });
   const lastReplyAt = new Map<number, number>();
   const telegramContextCache = new Map<string, { expiresAt: number; value: string }>();
+  const modelRequests = new Map<number, number[]>();
+  const burstVersions = new Map<number, number>();
+
+  const reactNaturally = async (ctx: Context): Promise<void> => {
+    if (!config.ENABLE_MESSAGE_REACTIONS || !ctx.chat || !ctx.message) return;
+    const customEmojiId =
+      config.JYNX_CUSTOM_EMOJI_IDS[
+        Math.abs(ctx.message.message_id) % Math.max(1, config.JYNX_CUSTOM_EMOJI_IDS.length)
+      ];
+    if (customEmojiId) {
+      try {
+        await ctx.api.setMessageReaction(ctx.chat.id, ctx.message.message_id, [
+          { type: 'custom_emoji', custom_emoji_id: customEmojiId },
+        ]);
+        return;
+      } catch {
+        // Custom reactions must also be allowed by the chat; fall back to a normal reaction.
+      }
+    }
+    const emoji = ctx.message.message_id % 3 === 0 ? '❤' : '👍';
+    await ctx.api
+      .setMessageReaction(ctx.chat.id, ctx.message.message_id, [{ type: 'emoji', emoji }])
+      .catch(() => undefined);
+  };
 
   const telegramContext = async (ctx: Context): Promise<string> => {
     if (!ctx.from || !ctx.chat) return '';
@@ -146,7 +207,7 @@ export function createBot(deps: BotDependencies): Bot {
     await ctx.reply('pong');
   });
 
-  bot.command('whoami', async (ctx) => {
+  bot.command(['whoami', 'id'], async (ctx) => {
     if (!ctx.from) {
       return;
     }
@@ -409,6 +470,45 @@ export function createBot(deps: BotDependencies): Bot {
       return;
     }
 
+    if (
+      !allowWithinWindow(
+        modelRequests,
+        ctx.from.id,
+        config.MAX_MODEL_REQUESTS_PER_USER_PER_MINUTE,
+        60_000,
+      )
+    ) {
+      await ctx.reply('slow down a sec, you’re sending more than i can answer cleanly');
+      return;
+    }
+
+    const burstVersion = (burstVersions.get(ctx.chat.id) ?? 0) + 1;
+    if (!burstVersions.has(ctx.chat.id) && burstVersions.size >= 10_000) {
+      const oldest = burstVersions.keys().next().value;
+      if (oldest !== undefined) burstVersions.delete(oldest);
+    }
+    burstVersions.set(ctx.chat.id, burstVersion);
+    if (config.MESSAGE_BURST_COALESCE_MS > 0) {
+      await delay(config.MESSAGE_BURST_COALESCE_MS);
+    }
+    if (burstVersions.get(ctx.chat.id) !== burstVersion) {
+      try {
+        await repository.addMessage({
+          chatId: ctx.chat.id,
+          userId: ctx.from.id,
+          telegramMessageId: ctx.message.message_id,
+          replyToMessageId: ctx.message.reply_to_message?.message_id ?? null,
+          role: 'user',
+          content: text,
+          metadata: { displayName: name },
+        });
+        if (ctx.message.message_id % 3 !== 1) await reactNaturally(ctx);
+      } catch (error) {
+        await reporter.reportError('persist.message.coalesced', error);
+      }
+      return;
+    }
+
     try {
       await ctx.replyWithChatAction('typing');
       const result = await conversation.respond({
@@ -455,9 +555,24 @@ export function createBot(deps: BotDependencies): Bot {
         await reporter.reportError('proposals.consider', error);
       }
 
-      const sent = await ctx.reply(reply, {
+      const formatted = telegramHtml(reply, 4000);
+      const decorated = customEmojiReply(
+        formatted,
+        config.JYNX_CUSTOM_EMOJI_IDS,
+        ctx.message.message_id,
+        identity.role === 'owner',
+      );
+      const replyOptions = {
         reply_parameters: isGroup ? { message_id: ctx.message.message_id } : undefined,
-      });
+        parse_mode: 'HTML' as const,
+      };
+      let sent;
+      try {
+        sent = await ctx.reply(decorated, replyOptions);
+      } catch (error) {
+        if (decorated === formatted) throw error;
+        sent = await ctx.reply(formatted, replyOptions);
+      }
 
       lastReplyAt.set(ctx.chat.id, Date.now());
 

@@ -1,0 +1,26 @@
+[Unit]
+Description=Jynx Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jynx
+Group=jynx
+WorkingDirectory=/opt/jynx
+EnvironmentFile=/opt/jynx/.env
+ExecStart=/usr/bin/node /opt/jynx/dist/index.js
+Restart=always
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/jynx
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

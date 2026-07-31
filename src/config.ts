@@ -54,6 +54,23 @@ const adminIdsSchema = z
     return [...new Set(ids)];
   });
 
+const commaSeparatedStrings = z
+  .string()
+  .default('')
+  .transform((raw) => [
+    ...new Set(
+      raw
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ),
+  ]);
+
+const customEmojiIdsSchema = commaSeparatedStrings.refine(
+  (values) => values.every((value) => /^\d{1,30}$/.test(value)),
+  'must contain only comma-separated numeric custom emoji IDs',
+);
+
 const booleanFromEnvironment = (defaultValue: boolean) =>
   z.preprocess((value) => {
     if (value === undefined || value === '') {
@@ -111,6 +128,7 @@ const envSchema = z.object({
   JYNX_ADMIN_IDS: adminIdsSchema,
   JYNX_APPROVAL_CHAT_ID: optionalTelegramIdSchema,
   JYNX_ERROR_CHAT_ID: optionalTelegramIdSchema,
+  JYNX_CUSTOM_EMOJI_IDS: customEmojiIdsSchema,
 
   MAGICA_API_KEY: z.string().trim().min(1, 'MAGICA_API_KEY is required'),
   MAGICA_BASE_URL: z.string().trim().url('MAGICA_BASE_URL must be a valid URL'),
@@ -168,6 +186,12 @@ const envSchema = z.object({
 
   MAX_AGENT_STEPS: integerFromEnvironment(15, 1, 100),
   MAX_ACTIVE_RUNS_PER_USER: integerFromEnvironment(2, 1, 20),
+  MAX_CONCURRENT_AGENT_RUNS: integerFromEnvironment(1, 1, 10),
+  MAX_CONCURRENT_MODEL_REQUESTS: integerFromEnvironment(4, 1, 50),
+  MAX_MODEL_REQUESTS_PER_USER_PER_MINUTE: integerFromEnvironment(20, 1, 200),
+  MAX_PROPOSALS_PER_USER_PER_HOUR: integerFromEnvironment(10, 1, 100),
+  MESSAGE_BURST_COALESCE_MS: integerFromEnvironment(1200, 0, 10_000),
+  ENABLE_MESSAGE_REACTIONS: booleanFromEnvironment(true),
 
   MODEL_TIMEOUT_MS: integerFromEnvironment(120_000, 1_000, 600_000),
   MODEL_MAX_RETRIES: integerFromEnvironment(2, 0, 10),
@@ -186,9 +210,7 @@ const envSchema = z.object({
   AGENT_ALLOWED_COMMANDS: z
     .string()
     .trim()
-    .default(
-      'git,npm,npx,node,pnpm,yarn,ls,cat,rg,grep,mkdir,touch,cp,mv,rm,echo,test,vitest,tsc,eslint,prettier',
-    )
+    .default('git,npm')
     .transform((raw) => [
       ...new Set(
         raw

@@ -15,6 +15,7 @@ describe('AgentRunner', () => {
     GITHUB_DEFAULT_BRANCH: 'main',
     MAX_AGENT_STEPS: 10,
     MAX_ACTIVE_RUNS_PER_USER: 2,
+    MAX_CONCURRENT_AGENT_RUNS: 1,
   };
 
   it('refuses a run above the per-user active limit', async () => {
@@ -29,10 +30,10 @@ describe('AgentRunner', () => {
       {} as never,
       {} as never,
       {} as never,
-      {} as never,
     );
 
     const result = await runner.execute(
+      'do the thing',
       'do the thing',
       { branch: 'jynx/thing', summary: 'thing', steps: ['one'], testPlan: [] },
       42,
@@ -59,7 +60,6 @@ describe('AgentRunner', () => {
           }),
         })),
       } as never,
-      {} as never,
       {} as never,
       {} as never,
     );
@@ -95,13 +95,12 @@ describe('AgentRunner', () => {
       repository as never,
       model as never,
       {} as never,
-      github as never,
       logger,
       undefined,
       introspection as never,
     );
 
-    const result = await runner.executeAction('check the database approvals', 42);
+    const result = await runner.executeAction('check the database approvals', ['db.stats'], 42);
 
     expect(result).toMatchObject({ status: 'done', output: 'there are 4 pending approvals' });
     expect(introspection.dbOverview).toHaveBeenCalledOnce();
@@ -130,6 +129,8 @@ describe('AgentRunner', () => {
           ? { command, args, exitCode: 0, stdout: '', stderr: '' }
           : real.runChecked(command, args),
       ),
+      scoped: vi.fn(() => executor),
+      cleanup: vi.fn(),
     };
     const repository = {
       createTask: vi.fn(async () => ({ id: 1 })),
@@ -159,11 +160,14 @@ describe('AgentRunner', () => {
       repository as never,
       model as never,
       executor as never,
-      github as never,
       logger,
+      undefined,
+      undefined,
+      () => github as never,
     );
 
     const result = await runner.execute(
+      'change the value\nRecent context: private conversation must stay private',
       'change the value',
       { branch: 'jynx/change', summary: 'change value', steps: ['edit value'], testPlan: [] },
       42,
@@ -172,5 +176,8 @@ describe('AgentRunner', () => {
     expect(result).toMatchObject({ status: 'done', prUrl: 'https://example.test/pr/1' });
     expect(readFileSync(path.join(root, 'src/value.ts'), 'utf8')).toBe('export const value = 2;\n');
     expect(github.openPullRequest).toHaveBeenCalledOnce();
+    expect(github.openPullRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ body: expect.not.stringContaining('private conversation') }),
+    );
   });
 });

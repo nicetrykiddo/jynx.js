@@ -11,7 +11,7 @@ export class WebSearchService {
   public constructor(
     private readonly config: Pick<
       AppConfig,
-      'WEB_SEARCH_API_KEY' | 'WEB_SEARCH_BASE_URL' | 'WEB_SEARCH_MAX_RESULTS'
+      'WEB_SEARCH_API_KEY' | 'WEB_SEARCH_BASE_URL' | 'WEB_SEARCH_MAX_RESULTS' | 'LOG_TOOL_OUTPUTS'
     >,
     private readonly logger: Logger,
   ) {}
@@ -48,7 +48,10 @@ export class WebSearchService {
     };
 
     const results = Array.isArray(data.results) ? data.results : [];
-    this.logger.info({ query, count: results.length }, 'web search');
+    this.logger.info(
+      this.config.LOG_TOOL_OUTPUTS ? { query, count: results.length } : { count: results.length },
+      'web search',
+    );
 
     return results.slice(0, this.config.WEB_SEARCH_MAX_RESULTS).map((r) => ({
       title: r.title ?? '',

@@ -7,6 +7,7 @@ import type { IntrospectionService } from './introspection.js';
 import type { WebSearchService } from './websearch.js';
 import { CommandExecutor } from './executor.js';
 import { GitHubService } from './github.js';
+import type { Capability } from '../core/capabilities.js';
 
 export interface AgentPlan {
   branch: string;
@@ -119,15 +120,33 @@ export class AgentRunner {
       | 'GITHUB_DEFAULT_BRANCH'
       | 'MAX_AGENT_STEPS'
       | 'MAX_ACTIVE_RUNS_PER_USER'
+      | 'MAX_CONCURRENT_AGENT_RUNS'
     >,
     private readonly repository: Repository,
     private readonly model: ModelProvider,
     private readonly executor: CommandExecutor,
-    private readonly github: GitHubService,
     private readonly logger: Logger,
     private readonly webSearch?: WebSearchService,
     private readonly introspection?: IntrospectionService,
+    private readonly githubFactory: (executor: CommandExecutor) => GitHubService = (scoped) =>
+      new GitHubService(this.config, scoped, this.logger),
   ) {}
+
+  private activeCodeRuns = 0;
+  private readonly codeWaiters: Array<() => void> = [];
+
+  private async withCodeSlot<T>(work: () => Promise<T>): Promise<T> {
+    if (this.activeCodeRuns >= this.config.MAX_CONCURRENT_AGENT_RUNS) {
+      await new Promise<void>((resolve) => this.codeWaiters.push(resolve));
+    }
+    this.activeCodeRuns += 1;
+    try {
+      return await work();
+    } finally {
+      this.activeCodeRuns -= 1;
+      this.codeWaiters.shift()?.();
+    }
+  }
 
   public async plan(idea: string): Promise<AgentPlan> {
     const result = await this.model.complete({
@@ -176,15 +195,18 @@ export class AgentRunner {
     return [...new Set(selected)].slice(0, 12);
   }
 
-  private async trackedContext(request: string): Promise<{ context: string; files: Set<string> }> {
-    const listed = await this.executor.runChecked('git', ['ls-files']);
+  private async trackedContext(
+    request: string,
+    executor: CommandExecutor,
+  ): Promise<{ context: string; files: Set<string> }> {
+    const listed = await executor.runChecked('git', ['ls-files']);
     const tracked = listed.stdout.split('\n').filter(Boolean);
     const selected = await this.selectFiles(request, tracked);
     let size = 0;
     const sections: string[] = [];
     const loadedFiles = new Set<string>();
     for (const file of selected) {
-      const shown = await this.executor.runChecked('git', ['show', `HEAD:${file}`]);
+      const shown = await executor.runChecked('git', ['show', `HEAD:${file}`]);
       if (size + shown.stdout.length > 120_000) continue;
       size += shown.stdout.length;
       sections.push(`FILE: ${file}\n${shown.stdout}`);
@@ -194,10 +216,17 @@ export class AgentRunner {
     return { context: sections.join('\n\n'), files: loadedFiles };
   }
 
-  private async applyGeneratedPatch(idea: string, plan: AgentPlan): Promise<void> {
-    const tracked = await this.executor.runChecked('git', ['ls-files']);
+  private async applyGeneratedPatch(
+    idea: string,
+    plan: AgentPlan,
+    executor: CommandExecutor,
+  ): Promise<void> {
+    const tracked = await executor.runChecked('git', ['ls-files']);
     const trackedFiles = new Set(tracked.stdout.split('\n').filter(Boolean));
-    const loaded = await this.trackedContext(`${idea}\n\nPlan:\n${plan.steps.join('\n')}`);
+    const loaded = await this.trackedContext(
+      `${idea}\n\nPlan:\n${plan.steps.join('\n')}`,
+      executor,
+    );
     let previousError = '';
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const result = await this.model.complete({
@@ -232,12 +261,12 @@ export class AgentRunner {
             throw new Error(`patch targets ${file} without loading its current contents`);
           }
         }
-        this.executor.writeFile('.git/maple.patch', patch + '\n');
-        const checked = await this.executor.run('git', ['apply', '--check', '.git/maple.patch']);
+        executor.writeFile('.git/maple.patch', patch + '\n');
+        const checked = await executor.run('git', ['apply', '--check', '.git/maple.patch']);
         if (checked.exitCode !== 0) throw new Error(checked.stderr || checked.stdout);
-        await this.executor.runChecked('git', ['apply', '.git/maple.patch']);
-        await this.executor.runChecked('git', ['diff', '--check']);
-        const changed = await this.executor.run('git', ['diff', '--quiet']);
+        await executor.runChecked('git', ['apply', '.git/maple.patch']);
+        await executor.runChecked('git', ['diff', '--check']);
+        const changed = await executor.run('git', ['diff', '--quiet']);
         if (changed.exitCode === 0) throw new Error('patch produced no repository changes');
         return;
       } catch (error) {
@@ -262,10 +291,9 @@ export class AgentRunner {
     return sections.join('\n\n');
   }
 
-  private async actionEvidence(request: string): Promise<string> {
-    const lower = request.toLowerCase();
+  private async actionEvidence(request: string, capabilities: Capability[]): Promise<string> {
     const evidence: string[] = [];
-    if (/\b(web|online|internet|latest|news|look up|search)\b/.test(lower)) {
+    if (capabilities.includes('web.read')) {
       if (!this.webSearch?.isConfigured) throw new Error('web search is not configured');
       const results = await this.webSearch.search(request);
       evidence.push(
@@ -273,22 +301,26 @@ export class AgentRunner {
           results.map((result) => `${result.title}\n${result.snippet}\n${result.url}`).join('\n\n'),
       );
     }
-    if (/\b(db|database|messages table|approvals table|tasks table)\b/.test(lower)) {
+    if (capabilities.includes('db.stats')) {
       if (!this.introspection?.isEnabled) throw new Error('database inspection is disabled');
       evidence.push(`DATABASE OVERVIEW:\n${JSON.stringify(await this.introspection.dbOverview())}`);
     }
-    if (/\b(code|codebase|repository|repo|source|file|bug|implementation)\b/.test(lower)) {
+    if (capabilities.includes('repo.read')) {
       evidence.push(`CODE CONTEXT:\n${await this.codeEvidence(request)}`);
     }
     return evidence.join('\n\n') || 'No external evidence was required.';
   }
 
-  public async executeAction(idea: string, requestedBy: number | null): Promise<RunnerResult> {
+  public async executeAction(
+    idea: string,
+    capabilities: Capability[],
+    requestedBy: number | null,
+  ): Promise<RunnerResult> {
     const task = await this.repository.createTask({
       userId: requestedBy,
       title: idea.slice(0, 120),
       description: idea,
-      state: { mode: 'action' },
+      state: { mode: 'action', capabilities },
     });
     if (requestedBy !== null) {
       const activeRuns = await this.repository.countActiveRunsForUser(requestedBy);
@@ -300,7 +332,7 @@ export class AgentRunner {
     }
     try {
       await this.repository.updateTask(task.id, { status: 'running' });
-      const evidence = await this.actionEvidence(idea);
+      const evidence = await this.actionEvidence(idea, capabilities);
       const result = await this.model.complete({
         messages: [
           {
@@ -329,6 +361,7 @@ export class AgentRunner {
 
   public async execute(
     idea: string,
+    publicRequest: string,
     plan: AgentPlan,
     requestedBy: number | null,
   ): Promise<RunnerResult> {
@@ -347,46 +380,49 @@ export class AgentRunner {
         return { taskId: task.id, status: 'failed', error };
       }
     }
-    try {
-      await this.repository.updateTask(task.id, { status: 'running' });
-      if (!this.github.isConfigured) throw new Error('GitHub is not configured');
-      await this.github.createBranch(plan.branch);
-      await this.executor.runChecked('npm', ['ci']);
-      await this.applyGeneratedPatch(idea, plan);
-      await this.executor.runChecked('npm', ['run', 'build']);
-      await this.executor.runChecked('npm', ['run', 'lint']);
-      await this.github.commitAll(`jynx: ${plan.summary.slice(0, 100)}`);
-      await this.github.push(plan.branch);
-      const pr = await this.github.openPullRequest({
-        branch: plan.branch,
-        title: plan.summary.slice(0, 120),
-        body: [
-          'Idea:',
-          idea,
-          '',
-          'Steps:',
-          ...plan.steps.map((step) => `- ${step}`),
-          '',
-          'Validation: patch safety, git diff check, build, and lint passed. Executable tests are deferred to isolated review/CI.',
-        ].join('\n'),
-      });
-      await this.repository.updateTask(task.id, {
-        status: 'done',
-        state: { branch: plan.branch, prUrl: pr.url },
-      });
-      return { taskId: task.id, status: 'done', prUrl: pr.url };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.error({ err: message, taskId: task.id }, 'agent run failed');
-      // ponytail: failed generated changes are discarded; persist artifacts if forensic debugging is needed.
+    return this.withCodeSlot(async () => {
+      const executor = this.executor.scoped(String(task.id));
+      const github = this.githubFactory(executor);
       try {
-        await this.executor.run('git', ['reset', '--hard', 'HEAD']);
-        await this.executor.run('git', ['clean', '-fd']);
-      } catch {
-        // cleanup is best-effort; preserve the original failure
+        await this.repository.updateTask(task.id, { status: 'running' });
+        if (!github.isConfigured) throw new Error('GitHub is not configured');
+        await github.createBranch(plan.branch);
+        await executor.runChecked('npm', ['ci']);
+        await this.applyGeneratedPatch(idea, plan, executor);
+        await executor.runChecked('npm', ['run', 'build']);
+        await executor.runChecked('npm', ['run', 'lint']);
+        await github.commitAll(`jynx: ${plan.summary.slice(0, 100)}`);
+        await github.push(plan.branch);
+        const pr = await github.openPullRequest({
+          branch: plan.branch,
+          title: plan.summary.slice(0, 120),
+          body: [
+            'Idea:',
+            publicRequest,
+            '',
+            'Steps:',
+            ...plan.steps.map((step) => `- ${step}`),
+            '',
+            'Validation: patch safety, git diff check, build, and lint passed. Executable tests are deferred to isolated review/CI.',
+          ].join('\n'),
+        });
+        await this.repository.updateTask(task.id, {
+          status: 'done',
+          state: { branch: plan.branch, prUrl: pr.url },
+        });
+        return { taskId: task.id, status: 'done', prUrl: pr.url };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error({ err: message, taskId: task.id }, 'agent run failed');
+        await this.repository.updateTask(task.id, { status: 'failed', lastError: message });
+        return { taskId: task.id, status: 'failed', error: message };
+      } finally {
+        try {
+          executor.cleanup();
+        } catch (error) {
+          this.logger.warn({ err: error, taskId: task.id }, 'agent workdir cleanup failed');
+        }
       }
-      await this.repository.updateTask(task.id, { status: 'failed', lastError: message });
-      return { taskId: task.id, status: 'failed', error: message };
-    }
+    });
   }
 }

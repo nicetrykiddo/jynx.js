@@ -61,6 +61,9 @@ export function createLogger(config: Pick<AppConfig, 'LOG_LEVEL' | 'NODE_ENV'>):
       level(label) {
         return { level: label };
       },
+      log(object) {
+        return redactSecrets(object);
+      },
     },
   });
 }

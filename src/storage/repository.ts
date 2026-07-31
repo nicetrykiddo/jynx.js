@@ -234,6 +234,24 @@ export class Repository {
     return rows[0]?.count ?? 0;
   }
 
+  public async countRecentApprovalsForUser(userId: number, sinceMs: number): Promise<number> {
+    const since = new Date(Date.now() - sinceMs);
+    const rows = await this.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(approvals)
+      .where(and(eq(approvals.requestedBy, userId), sql`${approvals.createdAt} >= ${since}`));
+    return rows[0]?.count ?? 0;
+  }
+
+  public async failAbandonedTasks(reason: string): Promise<number> {
+    const rows = await this.db
+      .update(tasks)
+      .set({ status: 'failed', lastError: reason, updatedAt: new Date() })
+      .where(sql`${tasks.status} in ('pending', 'running')`)
+      .returning({ id: tasks.id });
+    return rows.length;
+  }
+
   public async createApproval(input: {
     requestedBy?: number | null;
     requestedByName?: string | null;

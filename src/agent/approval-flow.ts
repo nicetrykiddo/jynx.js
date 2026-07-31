@@ -6,6 +6,11 @@ import type { Repository } from '../storage/repository.js';
 import type { Approval } from '../storage/schema.js';
 import type { AgentPlan, AgentRunner } from './runner.js';
 import { telegramMessageLink } from '../core/reporter.js';
+import {
+  normalizeCapabilities,
+  requiresTrustedChannel,
+  type Capability,
+} from '../core/capabilities.js';
 
 export interface ApprovalFlowDeps {
   config: Pick<AppConfig, 'GITHUB_REPO'>;
@@ -23,6 +28,10 @@ export interface DecisionResult {
 interface IdeaPayload {
   summary?: string;
   idea?: string;
+  publicRequest?: string;
+  capabilities?: Capability[];
+  trustedChannel?: boolean;
+  requesterRole?: string;
 }
 
 interface PlanPayload extends IdeaPayload {
@@ -62,6 +71,22 @@ export class ApprovalFlow {
     if (approval.status !== 'pending') {
       return { reply: `approval #${approvalId} is already ${approval.status}.` };
     }
+    const payload = asPlanPayload(approval.payload);
+    const capabilities = normalizeCapabilities(payload.capabilities);
+    if (
+      (approval.kind === 'feature' && !capabilities.includes('repo.write')) ||
+      (approval.kind !== 'feature' && capabilities.includes('repo.write'))
+    ) {
+      return { reply: `approval #${approvalId} failed its capability check.` };
+    }
+    if (
+      requiresTrustedChannel(capabilities) &&
+      (!payload.trustedChannel ||
+        approval.requestedBy === null ||
+        !this.deps.auth.isOwner(approval.requestedBy))
+    ) {
+      return { reply: `approval #${approvalId} failed its trusted-access check.` };
+    }
 
     if (approval.stage === 'idea') {
       return approval.kind === 'feature'
@@ -77,21 +102,30 @@ export class ApprovalFlow {
   private async approveAction(userId: number, approval: Approval): Promise<DecisionResult> {
     const payload = asPlanPayload(approval.payload);
     const idea = payload.summary ?? approval.summary;
+    const capabilities = normalizeCapabilities(payload.capabilities);
     const decided = await this.deps.repository.decideApproval(approval.id, 'approved', userId);
     if (!decided) return { reply: `approval #${approval.id} was already decided.` };
     await this.editApproval(
       decided,
       `✅ Approval #${approval.id} approved\nRunning this as a read-only action. No branch or PR will be created.\n${approvalContext(decided).join('\n')}`,
     );
-    void this.runActionInBackground(idea, decided);
+    void this.runActionInBackground(idea, capabilities, decided);
     return {
       reply: `approval #${approval.id} approved. i'll update this message with the result.`,
     };
   }
 
-  private async runActionInBackground(idea: string, approval: Approval): Promise<void> {
+  private async runActionInBackground(
+    idea: string,
+    capabilities: Capability[],
+    approval: Approval,
+  ): Promise<void> {
     try {
-      const result = await this.deps.runner.executeAction(idea, approval.requestedBy ?? null);
+      const result = await this.deps.runner.executeAction(
+        idea,
+        capabilities,
+        approval.requestedBy ?? null,
+      );
       const text =
         result.status === 'done'
           ? `✅ Approval #${approval.id} completed\n${(result.output ?? 'No result returned.').slice(0, 2800)}\n${approvalContext(approval).join('\n')}`
@@ -171,6 +205,7 @@ export class ApprovalFlow {
     const payload = asPlanPayload(approval.payload);
     const plan = payload.plan;
     const idea = payload.idea ?? payload.summary ?? approval.summary;
+    const publicRequest = payload.publicRequest ?? payload.summary ?? approval.summary;
 
     if (!plan) {
       return { reply: `approval #${approvalId} has no plan payload.` };
@@ -185,17 +220,27 @@ export class ApprovalFlow {
       decided,
       `✅ Approval #${approvalId} approved\n\nBuilding on branch ${plan.branch}.\n\n${approvalContext(decided).join('\n')}`,
     );
-    void this.runInBackground(idea, plan, decided);
+    void this.runInBackground(idea, publicRequest, plan, decided);
 
     return {
       reply: `plan #${approvalId} approved. building on branch ${plan.branch}, i'll post the PR when it's up.`,
     };
   }
 
-  private async runInBackground(idea: string, plan: AgentPlan, approval: Approval): Promise<void> {
+  private async runInBackground(
+    idea: string,
+    publicRequest: string,
+    plan: AgentPlan,
+    approval: Approval,
+  ): Promise<void> {
     const approvalId = approval.id;
     try {
-      const result = await this.deps.runner.execute(idea, plan, approval.requestedBy ?? null);
+      const result = await this.deps.runner.execute(
+        idea,
+        publicRequest,
+        plan,
+        approval.requestedBy ?? null,
+      );
       if (result.status === 'done') {
         await this.editApproval(
           approval,

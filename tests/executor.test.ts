@@ -1,3 +1,6 @@
+import { mkdtempSync, mkdirSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   CommandExecutor,
@@ -45,6 +48,18 @@ describe('CommandExecutor', () => {
     const executor = makeExecutor();
     expect(() => executor.assertPath('../../etc/passwd')).toThrow(PathEscapeError);
     expect(() => executor.assertPath('src/file.ts')).not.toThrow();
+  });
+
+  it('blocks writes through a symlink that escapes the workdir', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'maple-executor-'));
+    const outside = mkdtempSync(path.join(tmpdir(), 'maple-target-'));
+    mkdirSync(path.join(root, 'safe'));
+    symlinkSync(outside, path.join(root, 'safe', 'escape'));
+    const executor = new CommandExecutor(
+      { allowedCommands: ['git'], timeoutMs: 5000, workdir: root },
+      logger,
+    );
+    expect(() => executor.writeFile('safe/escape/stolen', 'nope')).toThrow(PathEscapeError);
   });
 
   it('redacts credentials embedded in command URLs', () => {

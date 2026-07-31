@@ -60,11 +60,32 @@ export class MagicaProvider implements ModelProvider {
       | 'MAGICA_MODEL'
       | 'MODEL_TIMEOUT_MS'
       | 'MODEL_MAX_RETRIES'
+      | 'MAX_CONCURRENT_MODEL_REQUESTS'
     >,
     private readonly logger: Logger,
   ) {}
 
+  private activeRequests = 0;
+  private readonly waiters: Array<() => void> = [];
+
+  private async withSlot<T>(work: () => Promise<T>): Promise<T> {
+    if (this.activeRequests >= this.config.MAX_CONCURRENT_MODEL_REQUESTS) {
+      await new Promise<void>((resolve) => this.waiters.push(resolve));
+    }
+    this.activeRequests += 1;
+    try {
+      return await work();
+    } finally {
+      this.activeRequests -= 1;
+      this.waiters.shift()?.();
+    }
+  }
+
   public async complete(request: CompletionRequest): Promise<CompletionResult> {
+    return this.withSlot(() => this.completeWithinSlot(request));
+  }
+
+  private async completeWithinSlot(request: CompletionRequest): Promise<CompletionResult> {
     const { systemPrompt, prompt } = splitMessages(request.messages);
     const input: Record<string, unknown> = {
       prompt: prompt.length > 0 ? prompt : '(no message)',
@@ -190,7 +211,12 @@ export class MagicaProvider implements ModelProvider {
 export function createModelProvider(
   config: Pick<
     AppConfig,
-    'MAGICA_API_KEY' | 'MAGICA_BASE_URL' | 'MAGICA_MODEL' | 'MODEL_TIMEOUT_MS' | 'MODEL_MAX_RETRIES'
+    | 'MAGICA_API_KEY'
+    | 'MAGICA_BASE_URL'
+    | 'MAGICA_MODEL'
+    | 'MODEL_TIMEOUT_MS'
+    | 'MODEL_MAX_RETRIES'
+    | 'MAX_CONCURRENT_MODEL_REQUESTS'
   >,
   logger: Logger,
 ): ModelProvider {

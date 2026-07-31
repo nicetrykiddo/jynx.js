@@ -1,6 +1,7 @@
 import type { AppConfig } from '../config.js';
 import type { Logger } from '../core/logger.js';
 import type { CommandExecutor } from './executor.js';
+import path from 'node:path';
 
 export interface PullRequestResult {
   url: string;
@@ -35,8 +36,8 @@ export class GitHubService {
 
   public async createBranch(branch: string): Promise<void> {
     this.assertConfigured();
-    const inside = await this.executor.run('git', ['rev-parse', '--is-inside-work-tree']);
-    if (inside.exitCode !== 0) {
+    const top = await this.executor.run('git', ['rev-parse', '--show-toplevel']);
+    if (top.exitCode !== 0 || path.resolve(top.stdout.trim()) !== this.executor.workdir) {
       await this.executor.runChecked('git', [
         'clone',
         `https://github.com/${this.config.GITHUB_REPO as string}.git`,
@@ -68,13 +69,31 @@ export class GitHubService {
     this.assertConfigured();
     const token = this.config.GITHUB_TOKEN as string;
     const repo = this.config.GITHUB_REPO as string;
-    const remote = `https://x-access-token:${token}@github.com/${repo}.git`;
-    await this.executor.runChecked('git', [
-      'push',
-      remote,
-      `${branch}:${branch}`,
-      '--force-with-lease',
-    ]);
+    const tokenFile = '.git/maple-token';
+    const askpassFile = '.git/maple-askpass.sh';
+    this.executor.writeFile(tokenFile, token, 0o600);
+    this.executor.writeFile(
+      askpassFile,
+      '#!/bin/sh\ncase "$1" in *Username*) printf %s x-access-token ;; *) cat "$PWD/.git/maple-token" ;; esac\n',
+      0o700,
+    );
+    try {
+      await this.executor.runChecked(
+        'git',
+        [
+          '-c',
+          'core.hooksPath=/dev/null',
+          'push',
+          `https://github.com/${repo}.git`,
+          `${branch}:${branch}`,
+          '--force-with-lease',
+        ],
+        { GIT_ASKPASS: path.join(this.executor.workdir, askpassFile) },
+      );
+    } finally {
+      this.executor.removeFile(tokenFile);
+      this.executor.removeFile(askpassFile);
+    }
   }
 
   public async openPullRequest(input: OpenPullRequestInput): Promise<PullRequestResult> {

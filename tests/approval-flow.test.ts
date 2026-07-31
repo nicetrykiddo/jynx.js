@@ -74,6 +74,33 @@ function makeDeps(overrides: Partial<{ approval: FakeApproval }> = {}) {
 }
 
 describe('ApprovalFlow', () => {
+  it('rechecks trusted capabilities when approval is clicked', async () => {
+    const deps = makeDeps({
+      approval: {
+        id: 8,
+        requestedBy: 300,
+        kind: 'action',
+        stage: 'idea',
+        summary: 'show private stats',
+        payload: { capabilities: ['db.stats'], trustedChannel: false },
+        status: 'pending',
+      },
+    });
+    const flow = new ApprovalFlow({
+      config: { GITHUB_REPO: 'o/r' },
+      auth: makeAuth(),
+      repository: deps.repository as never,
+      reporter: deps.reporter as never,
+      runner: deps.runner as never,
+      logger,
+    });
+
+    await expect(flow.approve(100, 8)).resolves.toEqual({
+      reply: 'approval #8 failed its trusted-access check.',
+    });
+    expect(deps.runner.executeAction).not.toHaveBeenCalled();
+  });
+
   it('rejects approval from non-owner', async () => {
     const deps = makeDeps({
       approval: {
@@ -82,7 +109,7 @@ describe('ApprovalFlow', () => {
         kind: 'feature',
         stage: 'idea',
         summary: 'idea',
-        payload: { idea: 'do a thing' },
+        payload: { idea: 'do a thing', capabilities: ['repo.write'] },
         status: 'pending',
       },
     });
@@ -107,7 +134,7 @@ describe('ApprovalFlow', () => {
         kind: 'feature',
         stage: 'idea',
         summary: 'idea',
-        payload: { idea: 'do a thing' },
+        payload: { idea: 'do a thing', capabilities: ['repo.write'] },
         status: 'pending',
         approvalChatId: -100123,
         approvalMessageId: 55,
@@ -142,7 +169,7 @@ describe('ApprovalFlow', () => {
         kind: 'action',
         stage: 'idea',
         summary: 'check the database',
-        payload: { idea: 'check the database counts' },
+        payload: { idea: 'check the database counts', capabilities: [] },
         status: 'pending',
         approvalChatId: -100123,
         approvalMessageId: 56,
@@ -187,6 +214,7 @@ describe('ApprovalFlow', () => {
         summary: 'build it',
         payload: {
           idea: 'build it',
+          capabilities: ['repo.write'],
           plan: {
             branch: 'jynx/test',
             summary: 'build it',

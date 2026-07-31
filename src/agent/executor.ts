@@ -1,5 +1,13 @@
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  realpathSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Logger } from '../core/logger.js';
@@ -44,8 +52,15 @@ export function redactCommandArgs(args: string[]): string[] {
 }
 
 function assertWithinWorkdir(workdir: string, target: string): void {
-  const resolvedWorkdir = path.resolve(workdir);
-  const resolvedTarget = path.resolve(resolvedWorkdir, target);
+  const lexicalWorkdir = path.resolve(workdir);
+  const resolvedWorkdir = existsSync(lexicalWorkdir)
+    ? realpathSync(lexicalWorkdir)
+    : lexicalWorkdir;
+  const lexicalTarget = path.resolve(lexicalWorkdir, target);
+  const existingTarget = existsSync(lexicalTarget) ? realpathSync(lexicalTarget) : null;
+  const parent = path.dirname(lexicalTarget);
+  const resolvedParent = existsSync(parent) ? realpathSync(parent) : parent;
+  const resolvedTarget = existingTarget ?? path.join(resolvedParent, path.basename(lexicalTarget));
   if (
     resolvedTarget !== resolvedWorkdir &&
     !resolvedTarget.startsWith(resolvedWorkdir + path.sep)
@@ -60,6 +75,7 @@ export class CommandExecutor {
   public constructor(
     private readonly config: ExecutorConfig,
     private readonly logger: Logger,
+    private readonly disposable = false,
   ) {
     this.allowed = new Set(config.allowedCommands);
   }
@@ -72,12 +88,48 @@ export class CommandExecutor {
     assertWithinWorkdir(this.config.workdir, target);
   }
 
-  public writeFile(target: string, content: string): void {
-    this.assertPath(target);
-    writeFileSync(path.resolve(this.config.workdir, target), content, 'utf8');
+  public get workdir(): string {
+    return path.resolve(this.config.workdir);
   }
 
-  public async run(command: string, args: string[] = []): Promise<CommandResult> {
+  public scoped(segment: string): CommandExecutor {
+    if (!/^\d+$/.test(segment)) throw new PathEscapeError(segment);
+    return new CommandExecutor(
+      { ...this.config, workdir: path.join(this.workdir, 'runs', segment) },
+      this.logger,
+      true,
+    );
+  }
+
+  public writeFile(target: string, content: string, mode?: number): void {
+    this.assertPath(target);
+    const resolved = path.resolve(this.config.workdir, target);
+    writeFileSync(resolved, content, 'utf8');
+    if (mode !== undefined) chmodSync(resolved, mode);
+  }
+
+  public removeFile(target: string): void {
+    this.assertPath(target);
+    const resolved = path.resolve(this.config.workdir, target);
+    if (existsSync(resolved)) unlinkSync(resolved);
+  }
+
+  public cleanupAbandonedRuns(): void {
+    const runs = path.join(this.workdir, 'runs');
+    assertWithinWorkdir(this.workdir, runs);
+    rmSync(runs, { recursive: true, force: true });
+  }
+
+  public cleanup(): void {
+    if (!this.disposable) throw new Error('refusing to remove a non-disposable workdir');
+    rmSync(this.workdir, { recursive: true, force: true });
+  }
+
+  public async run(
+    command: string,
+    args: string[] = [],
+    environment: Record<string, string> = {},
+  ): Promise<CommandResult> {
     if (!this.allowed.has(command)) {
       throw new CommandNotAllowedError(command);
     }
@@ -108,6 +160,7 @@ export class CommandExecutor {
           CI: '1',
           GIT_TERMINAL_PROMPT: '0',
           npm_config_cache: cache,
+          ...environment,
         },
         shell: false,
       });
@@ -142,8 +195,12 @@ export class CommandExecutor {
     });
   }
 
-  public async runChecked(command: string, args: string[] = []): Promise<CommandResult> {
-    const result = await this.run(command, args);
+  public async runChecked(
+    command: string,
+    args: string[] = [],
+    environment: Record<string, string> = {},
+  ): Promise<CommandResult> {
+    const result = await this.run(command, args, environment);
     if (result.exitCode !== 0) {
       throw new Error(
         `${command} failed (${result.exitCode}): ${redactText(result.stderr || result.stdout).slice(0, 300)}`,
