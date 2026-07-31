@@ -17,15 +17,71 @@ export function telegramMessageLink(chatId: number, messageId: number): string |
   return null;
 }
 
+function escapeTelegramHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function telegramInline(text: string): string {
+  const emphasis = (value: string) =>
+    escapeTelegramHtml(value)
+      .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>')
+      .replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<i>$1</i>')
+      .replace(/(?<!\w)_([^_\n]+)_(?!\w)/g, '<i>$1</i>');
+  return text
+    .split(/(`[^`\n]*`)/g)
+    .map((part) => {
+      if (part.startsWith('`') && part.endsWith('`')) {
+        return `<code>${escapeTelegramHtml(part.slice(1, -1))}</code>`;
+      }
+      return part
+        .split(/(\[[^\]\n]+\]\(https?:\/\/[^\s)]+\))/g)
+        .map((segment) => {
+          const link = segment.match(/^\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)$/);
+          return link?.[1] && link[2]
+            ? `<a href="${escapeTelegramHtml(link[2])}">${emphasis(link[1])}</a>`
+            : emphasis(segment);
+        })
+        .join('');
+    })
+    .join('');
+}
+
+function formatTelegramMarkdown(text: string): string {
+  const output: string[] = [];
+  let code: string[] | null = null;
+  for (const line of text.split('\n')) {
+    if (/^```/.test(line.trim())) {
+      if (code) {
+        output.push(`<pre><code>${escapeTelegramHtml(code.join('\n'))}</code></pre>`);
+        code = null;
+      } else {
+        code = [];
+      }
+      continue;
+    }
+    if (code) {
+      code.push(line);
+      continue;
+    }
+    const heading = line.match(/^#{1,6}\s+(.+)$/);
+    if (heading?.[1]) {
+      output.push(`<b>${telegramInline(heading[1])}</b>`);
+      continue;
+    }
+    output.push(telegramInline(line.replace(/^\s*[-*]\s+/, '• ')));
+  }
+  if (code) output.push(`<pre><code>${escapeTelegramHtml(code.join('\n'))}</code></pre>`);
+  return output.join('\n');
+}
+
 export function telegramHtml(text: string, maxLength = 3500): string {
   let source = text;
   for (;;) {
-    const formatted = source
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/^\s*-\s+/gm, '• ')
-      .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
+    const formatted = formatTelegramMarkdown(source);
     if (formatted.length <= maxLength) return formatted;
     const nextLength = Math.floor((source.length * maxLength) / formatted.length);
     source = source.slice(0, Math.min(source.length - 1, nextLength));
