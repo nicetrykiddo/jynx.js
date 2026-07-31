@@ -11,7 +11,7 @@ describe('conversation safety and style', () => {
       chatType: 'private',
       trustedChannel: true,
     });
-    expect(prompt).toContain('beloved loved ones...');
+    expect(prompt).toContain('beloved lover');
     expect(prompt).toContain('love, devotion, loyalty, affection');
   });
 
