@@ -25,6 +25,11 @@ export interface RunnerResult {
   deploymentRequested?: boolean;
 }
 
+export interface DeploymentRequest {
+  prNumber: number;
+  branch: string;
+}
+
 const PLANNER_SYSTEM_PROMPT = [
   'You are Jynx, planning a concrete repository change for an approved request.',
   'Respond ONLY with strict JSON:',
@@ -124,7 +129,7 @@ export class AgentRunner {
     private readonly introspection?: IntrospectionService,
     private readonly githubFactory: (executor: CommandExecutor) => GitHubService = (scoped) =>
       new GitHubService(this.config, scoped, this.logger),
-    private readonly requestDeployment?: () => Promise<void>,
+    private readonly requestDeployment?: (request: DeploymentRequest) => Promise<void>,
   ) {}
 
   private activeCodeRuns = 0;
@@ -395,10 +400,6 @@ export class AgentRunner {
         if (!github.isConfigured) throw new Error('GitHub is not configured');
         await github.createBranch(plan.branch);
         await this.applyGeneratedPatch(idea, plan, executor);
-        await executor.runChecked('npm', ['install', '--ignore-scripts']);
-        await executor.runIsolatedChecked('npm', ['test']);
-        await executor.runIsolatedChecked('npm', ['run', 'build']);
-        await executor.runIsolatedChecked('npm', ['run', 'lint']);
         await github.commitAll(`jynx: ${plan.summary.slice(0, 100)}`);
         await github.push(plan.branch);
         const pr = await github.openPullRequest({
@@ -411,14 +412,13 @@ export class AgentRunner {
             'Steps:',
             ...plan.steps.map((step) => `- ${step}`),
             '',
-            'Validation: patch safety, git diff check, tests, build, and lint passed.',
+            'Validation: patch safety and git diff checks passed. The isolated deployment controller will run tests, typecheck, lint, and build before merge and again on merged main before deployment.',
           ].join('\n'),
         });
         let deploymentRequested = false;
         if (this.config.ENABLE_AUTOMATIC_RESTART) {
           if (!this.requestDeployment) throw new Error('deployment controller is unavailable');
-          await github.mergePullRequest(pr.number);
-          await this.requestDeployment();
+          await this.requestDeployment({ prNumber: pr.number, branch: plan.branch });
           deploymentRequested = true;
         }
         await this.repository.updateTask(task.id, {

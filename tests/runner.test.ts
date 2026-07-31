@@ -134,13 +134,6 @@ describe('AgentRunner', () => {
           ? { command, args, exitCode: 0, stdout: '', stderr: '' }
           : real.runChecked(command, args),
       ),
-      runIsolatedChecked: vi.fn(async (command: string, args: string[]) => ({
-        command,
-        args,
-        exitCode: 0,
-        stdout: '',
-        stderr: '',
-      })),
       scoped: vi.fn(() => executor),
       cleanup: vi.fn(),
     };
@@ -166,7 +159,6 @@ describe('AgentRunner', () => {
       commitAll: vi.fn(async () => {}),
       push: vi.fn(async () => {}),
       openPullRequest: vi.fn(async () => ({ url: 'https://example.test/pr/1', number: 1 })),
-      mergePullRequest: vi.fn(async () => ({ sha: 'abc123' })),
     };
     const requestDeployment = vi.fn(async () => {});
     const runner = new AgentRunner(
@@ -203,8 +195,6 @@ describe('AgentRunner', () => {
     expect(github.openPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({ body: expect.not.stringContaining('private conversation') }),
     );
-    expect(github.mergePullRequest).toHaveBeenCalledWith(1);
-    expect(requestDeployment).toHaveBeenCalledOnce();
-    expect(executor.runIsolatedChecked).toHaveBeenCalledWith('npm', ['test']);
+    expect(requestDeployment).toHaveBeenCalledWith({ prNumber: 1, branch: 'jynx/change' });
   });
 });

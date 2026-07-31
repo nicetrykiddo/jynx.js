@@ -77,8 +77,10 @@ async function main(): Promise<void> {
     webSearch,
     introspection,
     undefined,
-    async () => {
-      await writeFile(path.resolve('.deploy-request'), `${Date.now()}\n`, { mode: 0o600 });
+    async (request) => {
+      await writeFile(path.resolve('.deploy-request'), `${JSON.stringify(request)}\n`, {
+        mode: 0o600,
+      });
     },
   );
 

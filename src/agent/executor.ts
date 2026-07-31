@@ -143,47 +143,6 @@ export class CommandExecutor {
     return this.execute(command, args, environment);
   }
 
-  public async runIsolated(command: string, args: string[] = []): Promise<CommandResult> {
-    if (!this.allowed.has(command)) throw new CommandNotAllowedError(command);
-    for (const arg of args) {
-      if (SHELL_METACHARACTERS.test(arg)) {
-        throw new CommandNotAllowedError(`${command} (unsafe argument: ${arg})`);
-      }
-    }
-    const cwd = this.workdir;
-    const binds = ['/usr', '/lib', '/lib64'].flatMap((directory) =>
-      existsSync(directory) ? ['--ro-bind', directory, directory] : [],
-    );
-    return this.execute('bwrap', [
-      '--unshare-all',
-      '--new-session',
-      '--die-with-parent',
-      ...binds,
-      '--dev',
-      '/dev',
-      '--proc',
-      '/proc',
-      '--tmpfs',
-      '/tmp',
-      '--bind',
-      cwd,
-      '/workspace',
-      '--chdir',
-      '/workspace',
-      '--setenv',
-      'PATH',
-      '/usr/local/bin:/usr/bin:/bin',
-      '--setenv',
-      'HOME',
-      '/workspace',
-      '--setenv',
-      'CI',
-      '1',
-      command,
-      ...args,
-    ]);
-  }
-
   private async execute(
     command: string,
     args: string[],
@@ -250,16 +209,6 @@ export class CommandExecutor {
     environment: Record<string, string> = {},
   ): Promise<CommandResult> {
     const result = await this.run(command, args, environment);
-    if (result.exitCode !== 0) {
-      throw new Error(
-        `${command} failed (${result.exitCode}): ${redactText(result.stderr || result.stdout).slice(0, 300)}`,
-      );
-    }
-    return result;
-  }
-
-  public async runIsolatedChecked(command: string, args: string[] = []): Promise<CommandResult> {
-    const result = await this.runIsolated(command, args);
     if (result.exitCode !== 0) {
       throw new Error(
         `${command} failed (${result.exitCode}): ${redactText(result.stderr || result.stdout).slice(0, 300)}`,

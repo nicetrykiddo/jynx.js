@@ -8,10 +8,6 @@ export interface PullRequestResult {
   number: number;
 }
 
-export interface MergePullRequestResult {
-  sha: string;
-}
-
 export interface OpenPullRequestInput {
   branch: string;
   title: string;
@@ -127,32 +123,5 @@ export class GitHubService {
     const data = (await response.json()) as { html_url?: string; number?: number };
     this.logger.info({ url: data.html_url, number: data.number }, 'pull request opened');
     return { url: data.html_url ?? '', number: data.number ?? 0 };
-  }
-
-  public async mergePullRequest(number: number): Promise<MergePullRequestResult> {
-    this.assertConfigured();
-    const repo = this.config.GITHUB_REPO as string;
-    const response = await fetch(`https://api.github.com/repos/${repo}/pulls/${number}/merge`, {
-      method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${this.config.GITHUB_TOKEN as string}`,
-        Accept: 'application/vnd.github+json',
-        'Content-Type': 'application/json',
-        'X-GitHub-Api-Version': '2022-11-28',
-      },
-      body: JSON.stringify({ merge_method: 'squash' }),
-    });
-    const data = (await response.json().catch(() => ({}))) as {
-      merged?: boolean;
-      message?: string;
-      sha?: string;
-    };
-    if (!response.ok || !data.merged || !data.sha) {
-      throw new Error(
-        `failed to merge PR (${response.status}): ${(data.message ?? 'merge rejected').slice(0, 300)}`,
-      );
-    }
-    this.logger.info({ number, sha: data.sha }, 'pull request merged');
-    return { sha: data.sha };
   }
 }

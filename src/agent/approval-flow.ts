@@ -246,7 +246,7 @@ export class ApprovalFlow {
       );
       if (result.status === 'done') {
         const completion = result.deploymentRequested
-          ? `✅ Approval #${approvalId} built, tested, merged, and queued for deployment`
+          ? `✅ Approval #${approvalId} built and queued for verified merge/deployment`
           : `✅ Approval #${approvalId} built`;
         await this.editApproval(
           approval,
@@ -255,7 +255,7 @@ export class ApprovalFlow {
         await this.notifySource(
           approval,
           result.deploymentRequested
-            ? '✅ Your request passed every check, was merged, and is deploying.'
+            ? '✅ Your change is queued for isolated checks, merge, verification of main, and deployment.'
             : '✅ Your request is complete and the automated checks passed. The approval message has the result.',
         );
       } else {
