@@ -84,6 +84,44 @@ export function createBot(deps: BotDependencies): Bot {
     logger,
   });
   const lastReplyAt = new Map<number, number>();
+  const telegramContextCache = new Map<string, { expiresAt: number; value: string }>();
+
+  const telegramContext = async (ctx: Context): Promise<string> => {
+    if (!ctx.from || !ctx.chat) return '';
+    const key = `${ctx.chat.id}:${ctx.from.id}`;
+    const cached = telegramContextCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+
+    const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+    const [userProfile, userGifts, chatProfile, chatGifts, membership, memberCount] =
+      await Promise.allSettled([
+        ctx.api.getChat(ctx.from.id),
+        ctx.api.getUserGifts(ctx.from.id, { limit: 20 }),
+        ctx.api.getChat(ctx.chat.id),
+        ctx.api.getChatGifts(ctx.chat.id, { limit: 20 }),
+        isGroup ? ctx.api.getChatMember(ctx.chat.id, ctx.from.id) : Promise.resolve(undefined),
+        isGroup ? ctx.api.getChatMemberCount(ctx.chat.id) : Promise.resolve(undefined),
+      ]);
+    const valueOf = <T>(result: PromiseSettledResult<T>): T | undefined =>
+      result.status === 'fulfilled' ? result.value : undefined;
+    const raw = JSON.stringify({
+      user: ctx.from,
+      userProfile: valueOf(userProfile),
+      userGifts: valueOf(userGifts),
+      chat: ctx.chat,
+      chatProfile: valueOf(chatProfile),
+      chatGifts: valueOf(chatGifts),
+      membership: valueOf(membership),
+      memberCount: valueOf(memberCount),
+    });
+    const value = raw.length > 12_000 ? `${raw.slice(0, 12_000)}…` : raw;
+    if (telegramContextCache.size >= 1000) {
+      const oldest = telegramContextCache.keys().next().value;
+      if (oldest) telegramContextCache.delete(oldest);
+    }
+    telegramContextCache.set(key, { expiresAt: Date.now() + 10 * 60_000, value });
+    return value;
+  };
 
   bot.catch((error) => {
     void reporter.reportError('bot.middleware', error.error);
@@ -375,6 +413,7 @@ export function createBot(deps: BotDependencies): Bot {
         userText: text,
         displayName: name,
         trustedIntrospection: isTrustedChat,
+        telegramContext: await telegramContext(ctx),
       });
 
       try {
