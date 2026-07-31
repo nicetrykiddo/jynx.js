@@ -5,13 +5,13 @@ import { parseNaturalEdit, serializeTelegramContext } from '../src/telegram/bot.
 import type { CompletionRequest } from '../src/model/types.js';
 
 describe('conversation safety and style', () => {
-  it('treats the verified owner as her beloved lord', () => {
+  it('treats the verified owner as her beloved', () => {
     const prompt = buildSystemPrompt({
       identity: { userId: 1, role: 'owner', isOwner: true, isAdmin: true },
       chatType: 'private',
       trustedChannel: true,
     });
-    expect(prompt).toContain('beloved lord');
+    expect(prompt).toContain('beloved loved ones...');
     expect(prompt).toContain('love, devotion, loyalty, affection');
   });
 
