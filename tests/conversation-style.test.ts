@@ -78,6 +78,96 @@ describe('conversation safety and style', () => {
     expect(normalizeReply('first\n\n\nsecond\r\n\r\nthird')).toBe('first\nsecond\nthird');
   });
 
+  it('searches review requests with the named subject from recent context', async () => {
+    let captured: CompletionRequest | undefined;
+    const search = vi.fn(async () => [
+      { title: 'Review', url: 'https://example.test/review', snippet: 'spoiler-free take' },
+    ]);
+    const service = new ConversationService(
+      {
+        MAX_HISTORY_MESSAGES: 10,
+        MAX_GROUP_CONTEXT_MESSAGES: 10,
+        MAX_RESPONSE_CHARS: 4096,
+        JYNX_TIMEZONE: 'UTC',
+      },
+      {
+        getRecentMessages: vi.fn(async () => [
+          {
+            id: 1,
+            role: 'user',
+            content: 'find reviews for Agent Kim Reactivated without spoilers',
+          },
+        ]),
+        getMemories: vi.fn(async () => []),
+      } as never,
+      {
+        complete: vi.fn(async (request: CompletionRequest) => {
+          captured = request;
+          return { content: 'found it', toolCalls: [], finishReason: 'stop' };
+        }),
+      } as never,
+      { isConfigured: true, search } as never,
+    );
+
+    const result = await service.respond({
+      identity: { userId: 1, role: 'owner', isOwner: true, isAdmin: true },
+      chatId: 1,
+      chatType: 'private',
+      displayName: 'Melo',
+      userText: 'ye search and find',
+    });
+
+    expect(search).toHaveBeenCalledWith(
+      'find reviews for Agent Kim Reactivated without spoilers ye search and find',
+    );
+    expect(result.usedWebSearch).toBe(true);
+    expect(captured?.temperature).toBe(0.2);
+    expect(captured?.messages).toContainEqual(
+      expect.objectContaining({ role: 'tool', name: 'web_search' }),
+    );
+  });
+
+  it('shows the model a search failure instead of hiding it', async () => {
+    let captured: CompletionRequest | undefined;
+    const service = new ConversationService(
+      {
+        MAX_HISTORY_MESSAGES: 10,
+        MAX_GROUP_CONTEXT_MESSAGES: 10,
+        MAX_RESPONSE_CHARS: 4096,
+        JYNX_TIMEZONE: 'UTC',
+      },
+      {
+        getRecentMessages: vi.fn(async () => []),
+        getMemories: vi.fn(async () => []),
+      } as never,
+      {
+        complete: vi.fn(async (request: CompletionRequest) => {
+          captured = request;
+          return { content: 'search failed right now', toolCalls: [], finishReason: 'stop' };
+        }),
+      } as never,
+      {
+        isConfigured: true,
+        search: vi.fn(async () => {
+          throw new Error('network failed');
+        }),
+      } as never,
+    );
+
+    const result = await service.respond({
+      identity: { userId: 1, role: 'owner', isOwner: true, isAdmin: true },
+      chatId: 1,
+      chatType: 'private',
+      displayName: 'Melo',
+      userText: 'search for current reviews',
+    });
+
+    expect(result.usedWebSearch).toBe(true);
+    expect(captured?.messages).toContainEqual(
+      expect.objectContaining({ role: 'tool', name: 'web_search_error' }),
+    );
+  });
+
   it('never trusts a non-owner just because they are in a trusted group', () => {
     const prompt = buildSystemPrompt({
       identity: { userId: 2, role: 'user', isOwner: false, isAdmin: false },

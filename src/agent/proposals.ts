@@ -72,7 +72,10 @@ export class ProposalService {
       return {
         approvalId: null,
         link: null,
-        reply: result.status === 'done' ? result.output : input.assistantReply,
+        reply:
+          result.status === 'done'
+            ? result.output
+            : "the web search failed just now, so i don't have verified results yet.",
       };
     }
     if (

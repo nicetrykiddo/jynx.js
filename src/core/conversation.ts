@@ -144,7 +144,41 @@ export class ConversationService {
       'this year',
       'recently',
     ];
-    return triggers.some((t) => lower.includes(t)) || /\b20\d{2}\b/.test(lower);
+    return (
+      triggers.some((t) => lower.includes(t)) ||
+      /\b(search|browse|google|look\s*up|reviews?|ratings?)\b/.test(lower) ||
+      /\b20\d{2}\b/.test(lower)
+    );
+  }
+
+  private webSearchQuery(text: string, history: Message[]): string {
+    const generic = new Set([
+      'yes',
+      'yeah',
+      'ye',
+      'yep',
+      'search',
+      'browse',
+      'google',
+      'look',
+      'find',
+      'get',
+      'pull',
+      'please',
+      'plz',
+      'online',
+    ]);
+    const subjectWords = (value: string) =>
+      value
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .split(/\s+/)
+        .filter((word) => word.length > 2 && !generic.has(word));
+    if (subjectWords(text).length >= 2) return text;
+    const prior = [...history]
+      .reverse()
+      .find((message) => message.role === 'user' && subjectWords(message.content).length >= 2);
+    return prior ? `${prior.content} ${text}` : text;
   }
 
   private detectIntrospection(
@@ -292,20 +326,41 @@ export class ConversationService {
       }
     }
 
-    if (this.webSearch?.isConfigured && this.needsFactCheck(input.userText)) {
-      try {
-        const results = await this.webSearch.search(input.userText);
-        usedWebSearch = true;
-        if (results.length > 0) {
-          const context = results.map((r) => `- ${r.title}: ${r.snippet} (${r.url})`).join('\n');
+    if (this.needsFactCheck(input.userText)) {
+      usedWebSearch = true;
+      if (!this.webSearch?.isConfigured) {
+        messages.push({
+          role: 'tool',
+          name: 'web_search_error',
+          content:
+            'Web search is not configured. Say that the search is unavailable right now. Do not invent results, promise a later answer, or propose adding a capability that already exists in the product.',
+        });
+      } else {
+        try {
+          const query = this.webSearchQuery(input.userText, history);
+          const results = await this.webSearch.search(query);
+          if (results.length > 0) {
+            const context = results.map((r) => `- ${r.title}: ${r.snippet} (${r.url})`).join('\n');
+            messages.push({
+              role: 'tool',
+              name: 'web_search',
+              content: `Web search results for query "${query}" (answer the request now, cite naturally, do not dump raw, and honor spoiler constraints):\n${context}`,
+            });
+          } else {
+            messages.push({
+              role: 'tool',
+              name: 'web_search_error',
+              content: `Web search for "${query}" returned no results. State that plainly. Do not invent reviews, facts, sources, or a later result.`,
+            });
+          }
+        } catch {
           messages.push({
             role: 'tool',
-            name: 'web_search',
-            content: `Web search results for the user's message (use to fact-check, cite naturally, do not dump raw):\n${context}`,
+            name: 'web_search_error',
+            content:
+              'The web search request failed. Say once that the search failed right now. Do not invent results, claim it is still running, ask the user to keep waiting, or propose rebuilding web search.',
           });
         }
-      } catch {
-        // web search is best-effort; ignore failures
       }
     }
 
@@ -333,7 +388,7 @@ export class ConversationService {
 
     messages.push({ role: 'user', content: userContent });
 
-    const result = await this.model.complete({ messages, temperature: 0.85 });
+    const result = await this.model.complete({ messages, temperature: usedWebSearch ? 0.2 : 0.85 });
     let reply = normalizeReply(result.content);
 
     const maxChars = Math.min(this.config.MAX_RESPONSE_CHARS, 4096);

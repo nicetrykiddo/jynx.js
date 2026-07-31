@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { allowWithinWindow, customEmojiReply } from '../src/telegram/bot.js';
+import {
+  allowWithinWindow,
+  customEmojiReply,
+  isLowInformationMessage,
+} from '../src/telegram/bot.js';
 
 describe('human-like Telegram behavior', () => {
   it('limits a user within a rolling window', () => {
@@ -13,5 +17,12 @@ describe('human-like Telegram behavior', () => {
   it('uses configured custom emoji sparingly', () => {
     expect(customEmojiReply('hey', ['123'], 1, false)).toBe('hey');
     expect(customEmojiReply('hey', ['123'], 5, false)).toContain('emoji-id="123"');
+  });
+
+  it('does not send punctuation-only nudges to the model', () => {
+    expect(isLowInformationMessage('.')).toBe(true);
+    expect(isLowInformationMessage('.....')).toBe(true);
+    expect(isLowInformationMessage('..?!')).toBe(true);
+    expect(isLowInformationMessage('still waiting')).toBe(false);
   });
 });

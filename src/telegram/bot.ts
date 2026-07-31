@@ -95,6 +95,10 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export function isLowInformationMessage(text: string): boolean {
+  return /^[\s.!?,…_-]+$/.test(text);
+}
+
 export function customEmojiReply(
   text: string,
   customEmojiIds: string[],
@@ -130,6 +134,7 @@ export function createBot(deps: BotDependencies): Bot {
   const telegramContextCache = new Map<string, { expiresAt: number; value: string }>();
   const modelRequests = new Map<number, number[]>();
   const burstVersions = new Map<number, number>();
+  const activeChats = new Set<number>();
 
   const reactNaturally = async (ctx: Context): Promise<void> => {
     if (!config.ENABLE_MESSAGE_REACTIONS || !ctx.chat || !ctx.message) return;
@@ -364,6 +369,8 @@ export function createBot(deps: BotDependencies): Bot {
     );
     const name = displayName(ctx);
 
+    if (isLowInformationMessage(text)) return;
+
     if (identity.isOwner && ctx.message.reply_to_message?.from?.id === ctx.me.id) {
       const edited = parseNaturalEdit(text);
       if (edited) {
@@ -470,6 +477,23 @@ export function createBot(deps: BotDependencies): Bot {
       return;
     }
 
+    if (activeChats.has(ctx.chat.id)) {
+      try {
+        await repository.addMessage({
+          chatId: ctx.chat.id,
+          userId: ctx.from.id,
+          telegramMessageId: ctx.message.message_id,
+          replyToMessageId: ctx.message.reply_to_message?.message_id ?? null,
+          role: 'user',
+          content: text,
+          metadata: { displayName: name },
+        });
+      } catch (error) {
+        await reporter.reportError('persist.message.busy', error);
+      }
+      return;
+    }
+
     if (
       !allowWithinWindow(
         modelRequests,
@@ -509,6 +533,7 @@ export function createBot(deps: BotDependencies): Bot {
       return;
     }
 
+    activeChats.add(ctx.chat.id);
     try {
       await ctx.replyWithChatAction('typing');
       const result = await conversation.respond({
@@ -603,6 +628,8 @@ export function createBot(deps: BotDependencies): Bot {
       });
     } catch (error) {
       await reporter.reportError('conversation.respond', error);
+    } finally {
+      activeChats.delete(ctx.chat.id);
     }
   });
 

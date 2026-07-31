@@ -301,8 +301,12 @@ export class AgentRunner {
       if (!this.webSearch?.isConfigured) throw new Error('web search is not configured');
       const results = await this.webSearch.search(toolQuery);
       evidence.push(
-        'WEB RESULTS:\n' +
-          results.map((result) => `${result.title}\n${result.snippet}\n${result.url}`).join('\n\n'),
+        results.length > 0
+          ? 'WEB RESULTS:\n' +
+              results
+                .map((result) => `${result.title}\n${result.snippet}\n${result.url}`)
+                .join('\n\n')
+          : 'WEB SEARCH RETURNED NO RESULTS. Do not invent an answer or sources.',
       );
     }
     if (capabilities.includes('db.stats')) {
