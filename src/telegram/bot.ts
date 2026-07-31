@@ -1,7 +1,7 @@
 import { Bot, type Context } from 'grammy';
 import type { AppConfig } from '../config.js';
 import type { Logger } from '../core/logger.js';
-import { AuthService } from '../core/auth.js';
+import { AuthService, isTrustedOwnerChannel } from '../core/auth.js';
 import { ConversationService } from '../core/conversation.js';
 import { Reporter } from '../core/reporter.js';
 import { decideParticipation, type ParticipationMode } from '../core/participation.js';
@@ -253,11 +253,11 @@ export function createBot(deps: BotDependencies): Bot {
     const isPrivate = type === 'private';
     const isGroup = type === 'group' || type === 'supergroup';
     const identity = auth.identify(ctx.from.id);
-    const isTrustedChat =
-      identity.isOwner &&
-      (isPrivate ||
-        ctx.chat.id === config.JYNX_APPROVAL_CHAT_ID ||
-        ctx.chat.id === config.JYNX_ERROR_CHAT_ID);
+    const isTrustedChat = isTrustedOwnerChannel(
+      identity,
+      { id: ctx.chat.id, type },
+      { approval: config.JYNX_APPROVAL_CHAT_ID, error: config.JYNX_ERROR_CHAT_ID },
+    );
     const name = displayName(ctx);
 
     if (identity.isOwner && ctx.message.reply_to_message?.from?.id === ctx.me.id) {

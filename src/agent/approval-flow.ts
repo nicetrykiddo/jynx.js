@@ -97,6 +97,12 @@ export class ApprovalFlow {
           ? `✅ Approval #${approval.id} completed\n${(result.output ?? 'No result returned.').slice(0, 2800)}\n${approvalContext(approval).join('\n')}`
           : `⚠️ Approval #${approval.id} failed\n${(result.error ?? 'unknown').slice(0, 500)}\n${approvalContext(approval).join('\n')}`;
       await this.editApproval(approval, text);
+      await this.notifySource(
+        approval,
+        result.status === 'done'
+          ? '✅ Your request is complete. The approval message has the result.'
+          : "⚠️ Your request couldn't be completed. The approval message has the status.",
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.deps.logger.error({ err: message, approvalId: approval.id }, 'action run crashed');
@@ -104,6 +110,7 @@ export class ApprovalFlow {
         approval,
         `⚠️ Approval #${approval.id} crashed\n${message.slice(0, 500)}\n${approvalContext(approval).join('\n')}`,
       );
+      await this.notifySource(approval, "⚠️ Your request couldn't be completed.");
     }
   }
 
@@ -194,11 +201,16 @@ export class ApprovalFlow {
           approval,
           `✅ Approval #${approvalId} built\nPR: ${result.prUrl ?? '(no url)'}\n\n${approvalContext(approval).join('\n')}`,
         );
+        await this.notifySource(
+          approval,
+          '✅ Your request is complete and the automated checks passed. The approval message has the result.',
+        );
       } else {
         await this.editApproval(
           approval,
           `⚠️ Approval #${approvalId} failed\n${(result.error ?? 'unknown').slice(0, 300)}\n\n${approvalContext(approval).join('\n')}`,
         );
+        await this.notifySource(approval, "⚠️ Your request couldn't be completed.");
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -207,6 +219,7 @@ export class ApprovalFlow {
         approval,
         `⚠️ Approval #${approvalId} crashed\n${message.slice(0, 300)}\n\n${approvalContext(approval).join('\n')}`,
       );
+      await this.notifySource(approval, "⚠️ Your request couldn't be completed.");
     }
   }
 
@@ -248,5 +261,18 @@ export class ApprovalFlow {
         posted.messageId,
       );
     }
+  }
+
+  private async notifySource(approval: Approval, status: string): Promise<void> {
+    if (!approval.sourceChatId || !approval.sourceMessageId) return;
+    const link =
+      approval.approvalChatId && approval.approvalMessageId
+        ? telegramMessageLink(approval.approvalChatId, approval.approvalMessageId)
+        : null;
+    await this.deps.reporter.notifySource(
+      approval.sourceChatId,
+      approval.sourceMessageId,
+      `Approval #${approval.id}: ${status}${link ? `\n${link}` : ''}`,
+    );
   }
 }

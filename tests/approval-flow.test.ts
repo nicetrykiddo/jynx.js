@@ -53,6 +53,7 @@ function makeDeps(overrides: Partial<{ approval: FakeApproval }> = {}) {
   const reporter = {
     editProposal: vi.fn(async () => true),
     postProposal: vi.fn(async () => undefined),
+    notifySource: vi.fn(async () => true),
   };
   const runner = {
     plan: vi.fn(async () => ({
@@ -145,6 +146,8 @@ describe('ApprovalFlow', () => {
         status: 'pending',
         approvalChatId: -100123,
         approvalMessageId: 56,
+        sourceChatId: -100999,
+        sourceMessageId: 22,
       },
     });
     const flow = new ApprovalFlow({
@@ -166,6 +169,53 @@ describe('ApprovalFlow', () => {
       56,
       expect.stringContaining('checked it'),
       undefined,
+    );
+    expect(deps.reporter.notifySource).toHaveBeenCalledWith(
+      -100999,
+      22,
+      expect.stringContaining('Your request is complete'),
+    );
+  });
+
+  it('notifies the source message after a code change passes checks', async () => {
+    const deps = makeDeps({
+      approval: {
+        id: 3,
+        requestedBy: 300,
+        kind: 'feature',
+        stage: 'plan',
+        summary: 'build it',
+        payload: {
+          idea: 'build it',
+          plan: {
+            branch: 'jynx/test',
+            summary: 'build it',
+            steps: ['change code'],
+            testPlan: ['run checks'],
+          },
+        },
+        status: 'pending',
+        approvalChatId: -100123,
+        approvalMessageId: 57,
+        sourceChatId: -100999,
+        sourceMessageId: 23,
+      },
+    });
+    const flow = new ApprovalFlow({
+      config: { GITHUB_REPO: 'o/r' },
+      auth: makeAuth(),
+      repository: deps.repository as never,
+      reporter: deps.reporter as never,
+      runner: deps.runner as never,
+      logger,
+    });
+
+    await flow.approve(100, 3);
+    await vi.waitFor(() => expect(deps.reporter.notifySource).toHaveBeenCalledOnce());
+    expect(deps.reporter.notifySource).toHaveBeenCalledWith(
+      -100999,
+      23,
+      expect.stringContaining('automated checks passed'),
     );
   });
 });

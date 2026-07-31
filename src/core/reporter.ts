@@ -137,6 +137,19 @@ export class Reporter {
     }
   }
 
+  public async notifySource(chatId: number, messageId: number, text: string): Promise<boolean> {
+    try {
+      await this.api.sendMessage(chatId, telegramHtml(text), {
+        parse_mode: 'HTML',
+        reply_parameters: { message_id: messageId, allow_sending_without_reply: true },
+      });
+      return true;
+    } catch (sendError) {
+      this.logger.error({ err: sendError }, 'failed to notify proposal requester');
+      return false;
+    }
+  }
+
   public async info(text: string): Promise<void> {
     if (!this.config.JYNX_ERROR_CHAT_ID) {
       return;

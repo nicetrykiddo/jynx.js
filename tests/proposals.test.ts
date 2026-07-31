@@ -22,7 +22,7 @@ describe('ProposalService', () => {
         kind: 'action',
         title: 'Investigate the failure',
         summary: 'Find the cause and report it.',
-        requiresTrustedAccess: false,
+        access: 'public',
       })),
     };
     const reporter = {
@@ -76,7 +76,7 @@ describe('ProposalService', () => {
         kind: 'action',
         title: 'Show database stats',
         summary: 'Check the database stats.',
-        requiresTrustedAccess: false,
+        access: 'trusted',
       })),
     };
     const reporter = { postProposal: vi.fn() };

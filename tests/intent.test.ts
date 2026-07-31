@@ -21,7 +21,7 @@ describe('IntentDetector', () => {
         kind: 'feature',
         title: 'Add a weather command',
         summary: 'Owner wants a /weather command.',
-        requiresTrustedAccess: false,
+        access: 'public',
       }),
     );
     const detector = new IntentDetector(model);
@@ -63,7 +63,7 @@ describe('IntentDetector', () => {
         kind: 'action',
         title: 'Show database stats',
         summary: 'Read private database statistics.',
-        requiresTrustedAccess: true,
+        access: 'trusted',
       }),
     );
     const detector = new IntentDetector(model);

@@ -9,6 +9,17 @@ export interface Identity {
   isAdmin: boolean;
 }
 
+export function isTrustedOwnerChannel(
+  identity: Identity,
+  chat: { id: number; type: 'private' | 'group' | 'supergroup' | 'channel' },
+  channels: { approval?: number; error?: number },
+): boolean {
+  return (
+    identity.isOwner &&
+    (chat.type === 'private' || chat.id === channels.approval || chat.id === channels.error)
+  );
+}
+
 export class AuthService {
   private readonly ownerId: number;
   private readonly adminIds: Set<number>;

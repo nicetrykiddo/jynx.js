@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AuthService } from '../src/core/auth.js';
+import { AuthService, isTrustedOwnerChannel } from '../src/core/auth.js';
 
 const config = { JYNX_OWNER_ID: 100, JYNX_ADMIN_IDS: [100, 200] };
 
@@ -40,5 +40,18 @@ describe('AuthService', () => {
     expect(auth.canRequestWrites(100)).toBe(true);
     expect(auth.canRequestWrites(200)).toBe(false);
     expect(auth.canRequestWrites(300)).toBe(false);
+  });
+
+  it('trusts only owner DMs and the configured approval and error groups', () => {
+    const auth = new AuthService(config);
+    const owner = auth.identify(100);
+    const user = auth.identify(300);
+    const channels = { approval: -1001, error: -1002 };
+
+    expect(isTrustedOwnerChannel(owner, { id: 100, type: 'private' }, channels)).toBe(true);
+    expect(isTrustedOwnerChannel(owner, { id: -1001, type: 'supergroup' }, channels)).toBe(true);
+    expect(isTrustedOwnerChannel(owner, { id: -1002, type: 'supergroup' }, channels)).toBe(true);
+    expect(isTrustedOwnerChannel(owner, { id: -1003, type: 'supergroup' }, channels)).toBe(false);
+    expect(isTrustedOwnerChannel(user, { id: -1001, type: 'supergroup' }, channels)).toBe(false);
   });
 });

@@ -46,12 +46,7 @@ export class ProposalService {
     if (!detected.isProposal) {
       return null;
     }
-    const privateInspection =
-      detected.kind === 'action' &&
-      /\b(?:db|database|database stats?|database contents?|codebase|source code|private files?|secrets?|internal instructions?)\b/i.test(
-        `${input.text}\n${detected.summary}`,
-      );
-    if (!input.trustedChannel && (detected.requiresTrustedAccess || privateInspection)) return null;
+    if (detected.access === 'trusted' && !input.trustedChannel) return null;
 
     const approval = await this.deps.repository.createApproval({
       requestedBy: input.userId,
@@ -60,6 +55,7 @@ export class ProposalService {
       stage: 'idea',
       summary: detected.title,
       payload: {
+        access: detected.access,
         summary: detected.summary,
         idea: [
           detected.summary,
