@@ -170,6 +170,18 @@ export class Reporter {
     }
   }
 
+  public async replaceSource(chatId: number, messageId: number, text: string): Promise<boolean> {
+    try {
+      await this.api.editMessageText(chatId, messageId, telegramHtml(text, 4000), {
+        parse_mode: 'HTML',
+      });
+      return true;
+    } catch (sendError) {
+      this.logger.error({ err: sendError }, 'failed to replace source reply');
+      return false;
+    }
+  }
+
   public async info(text: string): Promise<void> {
     if (!this.config.JYNX_ERROR_CHAT_ID) {
       return;

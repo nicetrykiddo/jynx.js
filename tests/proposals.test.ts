@@ -51,6 +51,7 @@ describe('ProposalService', () => {
       requesterRole: 'user',
       trustedChannel: false,
       assistantReply: 'i can investigate that after approval',
+      alreadyWebSearched: false,
     });
 
     expect(intent.detect).toHaveBeenCalledWith('yes, investigate that failure', {
@@ -104,10 +105,62 @@ describe('ProposalService', () => {
       requesterRole: 'user',
       trustedChannel: false,
       assistantReply: 'ask me in owner DMs',
+      alreadyWebSearched: false,
     });
 
     expect(result).toBeNull();
     expect(repository.createApproval).not.toHaveBeenCalled();
     expect(reporter.postProposal).not.toHaveBeenCalled();
+  });
+
+  it('runs web-only research immediately without creating an approval', async () => {
+    const repository = {
+      getRecentMessages: vi.fn(async () => []),
+      createApproval: vi.fn(),
+      countRecentApprovalsForUser: vi.fn(),
+    };
+    const intent = {
+      detect: vi.fn(async () => ({
+        isProposal: true,
+        kind: 'action',
+        title: 'Get review scores',
+        summary: 'Find the current review scores for the film.',
+        capabilities: ['web.read'],
+      })),
+    };
+    const runner = {
+      executeAction: vi.fn(async () => ({
+        status: 'done',
+        output: 'it has 70% from critics and 82% from viewers',
+      })),
+    };
+    const service = new ProposalService({
+      repository: repository as never,
+      reporter: { postProposal: vi.fn() } as never,
+      intent: intent as never,
+      runner: runner as never,
+      logger: {} as never,
+      config: { MAX_PROPOSALS_PER_USER_PER_HOUR: 10 },
+    });
+
+    const result = await service.considerMessage({
+      userId: 42,
+      requestedByName: 'Sam',
+      chatId: -100123,
+      messageId: 9,
+      text: 'yes pull the actual numbers',
+      requesterRole: 'user',
+      trustedChannel: false,
+      assistantReply: 'want me to pull the scores?',
+      alreadyWebSearched: false,
+    });
+
+    expect(result).toEqual({
+      approvalId: null,
+      link: null,
+      reply: 'it has 70% from critics and 82% from viewers',
+    });
+    expect(repository.createApproval).not.toHaveBeenCalled();
+    expect(repository.countRecentApprovalsForUser).not.toHaveBeenCalled();
   });
 });

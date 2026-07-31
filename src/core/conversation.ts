@@ -19,6 +19,7 @@ export interface ConversationInput {
 
 export interface ConversationResult {
   reply: string;
+  usedWebSearch: boolean;
 }
 
 export function normalizeReply(text: string): string {
@@ -250,6 +251,7 @@ export class ConversationService {
       { role: 'system', content: systemPrompt },
       ...historyToChatMessages(history, isGroup),
     ];
+    let usedWebSearch = false;
 
     const spokenText = isGroup ? `${input.displayName}: ${input.userText}` : input.userText;
     const userContent = input.telegramContext
@@ -293,6 +295,7 @@ export class ConversationService {
     if (this.webSearch?.isConfigured && this.needsFactCheck(input.userText)) {
       try {
         const results = await this.webSearch.search(input.userText);
+        usedWebSearch = true;
         if (results.length > 0) {
           const context = results.map((r) => `- ${r.title}: ${r.snippet} (${r.url})`).join('\n');
           messages.push({
@@ -342,6 +345,6 @@ export class ConversationService {
       reply = '...';
     }
 
-    return { reply };
+    return { reply, usedWebSearch };
   }
 }

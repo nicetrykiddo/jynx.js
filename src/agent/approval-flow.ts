@@ -134,8 +134,9 @@ export class ApprovalFlow {
       await this.notifySource(
         approval,
         result.status === 'done'
-          ? '✅ Your request is complete. The approval message has the result.'
+          ? '✅ Request completed.'
           : "⚠️ Your request couldn't be completed. The approval message has the status.",
+        result.status === 'done' ? result.output : undefined,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -309,7 +310,11 @@ export class ApprovalFlow {
     }
   }
 
-  private async notifySource(approval: Approval, status: string): Promise<void> {
+  private async notifySource(
+    approval: Approval,
+    status: string,
+    finalResult?: string,
+  ): Promise<void> {
     approval = (await this.deps.repository.getApproval(approval.id)) ?? approval;
     if (!approval.sourceChatId || !approval.sourceMessageId) return;
     const link =
@@ -318,12 +323,18 @@ export class ApprovalFlow {
         : null;
     const update = `Approval #${approval.id}: ${status}${link ? `\n${link}` : ''}`;
     if (approval.sourceReplyMessageId && approval.sourceReplyText) {
-      const edited = await this.deps.reporter.editSource(
-        approval.sourceChatId,
-        approval.sourceReplyMessageId,
-        approval.sourceReplyText,
-        update,
-      );
+      const edited = finalResult
+        ? await this.deps.reporter.replaceSource(
+            approval.sourceChatId,
+            approval.sourceReplyMessageId,
+            finalResult,
+          )
+        : await this.deps.reporter.editSource(
+            approval.sourceChatId,
+            approval.sourceReplyMessageId,
+            approval.sourceReplyText,
+            update,
+          );
       if (edited) return;
     }
     await this.deps.reporter.notifySource(approval.sourceChatId, approval.sourceMessageId, update);

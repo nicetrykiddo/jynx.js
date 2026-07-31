@@ -17,6 +17,12 @@ export interface ProposalServiceDeps {
   config: Pick<AppConfig, 'MAX_PROPOSALS_PER_USER_PER_HOUR'>;
 }
 
+export interface ProposalResult {
+  approvalId: number | null;
+  link: string | null;
+  reply?: string;
+}
+
 export class ProposalService {
   public constructor(private readonly deps: ProposalServiceDeps) {}
 
@@ -29,15 +35,8 @@ export class ProposalService {
     requesterRole: Role;
     trustedChannel: boolean;
     assistantReply: string;
-  }): Promise<{ approvalId: number; link: string | null } | null> {
-    if (
-      input.userId !== null &&
-      (await this.deps.repository.countRecentApprovalsForUser(input.userId, 60 * 60 * 1000)) >=
-        this.deps.config.MAX_PROPOSALS_PER_USER_PER_HOUR
-    ) {
-      this.deps.logger.warn({ userId: input.userId }, 'proposal rate limit reached');
-      return null;
-    }
+    alreadyWebSearched: boolean;
+  }): Promise<ProposalResult | null> {
     const history = await this.deps.repository.getRecentMessages(input.chatId, 12);
     const recentContext = history
       .filter((message) => message.role !== 'user' || message.telegramMessageId !== input.messageId)
@@ -58,6 +57,31 @@ export class ProposalService {
       return null;
     }
     if (requiresTrustedChannel(detected.capabilities) && !input.trustedChannel) return null;
+    if (
+      detected.kind === 'action' &&
+      detected.capabilities.length === 1 &&
+      detected.capabilities[0] === 'web.read'
+    ) {
+      if (input.alreadyWebSearched) return null;
+      const result = await this.deps.runner.executeAction(
+        detected.summary,
+        ['web.read'],
+        input.userId,
+      );
+      return {
+        approvalId: null,
+        link: null,
+        reply: result.status === 'done' ? result.output : input.assistantReply,
+      };
+    }
+    if (
+      input.userId !== null &&
+      (await this.deps.repository.countRecentApprovalsForUser(input.userId, 60 * 60 * 1000)) >=
+        this.deps.config.MAX_PROPOSALS_PER_USER_PER_HOUR
+    ) {
+      this.deps.logger.warn({ userId: input.userId }, 'proposal rate limit reached');
+      return null;
+    }
 
     const approval = await this.deps.repository.createApproval({
       requestedBy: input.userId,

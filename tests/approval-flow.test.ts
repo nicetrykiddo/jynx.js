@@ -57,6 +57,7 @@ function makeDeps(overrides: Partial<{ approval: FakeApproval }> = {}) {
     postProposal: vi.fn(async () => undefined),
     notifySource: vi.fn(async () => true),
     editSource: vi.fn(async () => true),
+    replaceSource: vi.fn(async () => true),
   };
   const runner = {
     plan: vi.fn(async () => ({
@@ -178,6 +179,8 @@ describe('ApprovalFlow', () => {
         approvalMessageId: 56,
         sourceChatId: -100999,
         sourceMessageId: 22,
+        sourceReplyMessageId: 25,
+        sourceReplyText: 'i’ll check that after approval',
       },
     });
     const flow = new ApprovalFlow({
@@ -191,7 +194,7 @@ describe('ApprovalFlow', () => {
 
     const result = await flow.approve(100, 2);
     await vi.waitFor(() => expect(deps.runner.executeAction).toHaveBeenCalledOnce());
-    await vi.waitFor(() => expect(deps.reporter.notifySource).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(deps.reporter.replaceSource).toHaveBeenCalledOnce());
     expect(result.reply).toContain('update this message with the result');
     expect(deps.runner.plan).not.toHaveBeenCalled();
     expect(deps.runner.execute).not.toHaveBeenCalled();
@@ -201,11 +204,8 @@ describe('ApprovalFlow', () => {
       expect.stringContaining('checked it'),
       undefined,
     );
-    expect(deps.reporter.notifySource).toHaveBeenCalledWith(
-      -100999,
-      22,
-      expect.stringContaining('Your request is complete'),
-    );
+    expect(deps.reporter.replaceSource).toHaveBeenCalledWith(-100999, 25, 'checked it');
+    expect(deps.reporter.notifySource).not.toHaveBeenCalled();
   });
 
   it('notifies the source message after a code change passes checks', async () => {

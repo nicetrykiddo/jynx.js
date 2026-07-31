@@ -538,7 +538,7 @@ export function createBot(deps: BotDependencies): Bot {
       let reply = result.reply;
       let proposalRef: { approvalId: number; link: string | null } | null = null;
       try {
-        proposalRef = await proposals.considerMessage({
+        const proposal = await proposals.considerMessage({
           userId: ctx.from.id,
           requestedByName: requesterLabel(ctx),
           chatId: ctx.chat.id,
@@ -547,7 +547,13 @@ export function createBot(deps: BotDependencies): Bot {
           requesterRole: identity.role,
           trustedChannel: isTrustedChat,
           assistantReply: reply,
+          alreadyWebSearched: result.usedWebSearch,
         });
+        if (proposal?.reply) {
+          reply = proposal.reply;
+        } else if (proposal?.approvalId !== null && proposal?.approvalId !== undefined) {
+          proposalRef = { approvalId: proposal.approvalId, link: proposal.link };
+        }
         if (proposalRef?.link) {
           const footer = `Approval #${proposalRef.approvalId}: ${proposalRef.link}`;
           reply = `${reply.slice(0, 4095 - footer.length)}\n${footer}`;
