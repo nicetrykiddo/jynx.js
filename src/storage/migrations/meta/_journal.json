@@ -15,6 +15,13 @@
       "when": 1785411755472,
       "tag": "0001_natural_randall",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785500000000,
+      "tag": "0002_approval_context",
+      "breakpoints": true
     }
   ]
 }

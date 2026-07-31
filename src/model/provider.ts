@@ -1,11 +1,6 @@
 import type { AppConfig } from '../config.js';
 import type { Logger } from '../core/logger.js';
-import type {
-  ChatMessage,
-  CompletionRequest,
-  CompletionResult,
-  ModelProvider,
-} from './types.js';
+import type { ChatMessage, CompletionRequest, CompletionResult, ModelProvider } from './types.js';
 
 interface RunResponse {
   runId?: string;
@@ -14,12 +9,10 @@ interface RunResponse {
 
 interface PollResponse {
   status?: string;
-  output?:
-    | {
-        output?: string;
-        [key: string]: unknown;
-      }
-    | null;
+  output?: {
+    output?: string;
+    [key: string]: unknown;
+  } | null;
   error?: unknown;
 }
 
@@ -62,7 +55,11 @@ export class MagicaProvider implements ModelProvider {
   public constructor(
     private readonly config: Pick<
       AppConfig,
-      'MAGICA_API_KEY' | 'MAGICA_BASE_URL' | 'MAGICA_MODEL' | 'MODEL_TIMEOUT_MS' | 'MODEL_MAX_RETRIES'
+      | 'MAGICA_API_KEY'
+      | 'MAGICA_BASE_URL'
+      | 'MAGICA_MODEL'
+      | 'MODEL_TIMEOUT_MS'
+      | 'MODEL_MAX_RETRIES'
     >,
     private readonly logger: Logger,
   ) {}

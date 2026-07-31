@@ -20,6 +20,13 @@ export interface ConversationResult {
   reply: string;
 }
 
+export function normalizeReply(text: string): string {
+  return text
+    .replace(/\r\n/g, '\n')
+    .replace(/\n[ \t]*\n+/g, '\n')
+    .trim();
+}
+
 function historyToChatMessages(history: Message[], selfIsGroup: boolean): ChatMessage[] {
   return history.map((message) => {
     if (message.role === 'assistant') {
@@ -35,10 +42,7 @@ export class ConversationService {
   public constructor(
     private readonly config: Pick<
       AppConfig,
-      | 'MAX_HISTORY_MESSAGES'
-      | 'MAX_GROUP_CONTEXT_MESSAGES'
-      | 'MAX_RESPONSE_CHARS'
-      | 'JYNX_TIMEZONE'
+      'MAX_HISTORY_MESSAGES' | 'MAX_GROUP_CONTEXT_MESSAGES' | 'MAX_RESPONSE_CHARS' | 'JYNX_TIMEZONE'
     >,
     private readonly repository: Repository,
     private readonly model: ModelProvider,
@@ -69,7 +73,42 @@ export class ConversationService {
 
   private searchTerms(text: string): string[] {
     const stop = new Set([
-      'the','a','an','and','or','but','if','of','to','in','on','at','for','with','about','you','i','we','said','earlier','before','remember','what','who','did','that','this','was','were','is','are','do','does','me','my','your',
+      'the',
+      'a',
+      'an',
+      'and',
+      'or',
+      'but',
+      'if',
+      'of',
+      'to',
+      'in',
+      'on',
+      'at',
+      'for',
+      'with',
+      'about',
+      'you',
+      'i',
+      'we',
+      'said',
+      'earlier',
+      'before',
+      'remember',
+      'what',
+      'who',
+      'did',
+      'that',
+      'this',
+      'was',
+      'were',
+      'is',
+      'are',
+      'do',
+      'does',
+      'me',
+      'my',
+      'your',
     ]);
     return [
       ...new Set(
@@ -111,19 +150,36 @@ export class ConversationService {
   ): { kind: 'db' } | { kind: 'list'; dir: string } | { kind: 'file'; path: string } | null {
     const lower = text.toLowerCase();
     const fileMatch = text.match(/(?:src\/|tests\/|package\.json|tsconfig[^\s]*)[\w./-]*/);
-    if (fileMatch && (lower.includes('file') || lower.includes('code') || lower.includes('read') || lower.includes('show'))) {
+    if (
+      fileMatch &&
+      (lower.includes('file') ||
+        lower.includes('code') ||
+        lower.includes('read') ||
+        lower.includes('show'))
+    ) {
       return { kind: 'file', path: fileMatch[0] };
     }
     if (
-      (lower.includes('list') || lower.includes('what files') || lower.includes('directory') || lower.includes('folder')) &&
-      (lower.includes('file') || lower.includes('dir') || lower.includes('folder') || lower.includes('code'))
+      (lower.includes('list') ||
+        lower.includes('what files') ||
+        lower.includes('directory') ||
+        lower.includes('folder')) &&
+      (lower.includes('file') ||
+        lower.includes('dir') ||
+        lower.includes('folder') ||
+        lower.includes('code'))
     ) {
       const dirMatch = text.match(/(?:src|tests)[\w./-]*/);
       return { kind: 'list', dir: dirMatch ? dirMatch[0] : '.' };
     }
     if (
       (lower.includes('db') || lower.includes('database') || lower.includes('data')) &&
-      (lower.includes('how many') || lower.includes('count') || lower.includes('overview') || lower.includes('stats') || lower.includes('info') || lower.includes('content'))
+      (lower.includes('how many') ||
+        lower.includes('count') ||
+        lower.includes('overview') ||
+        lower.includes('stats') ||
+        lower.includes('info') ||
+        lower.includes('content'))
     ) {
       return { kind: 'db' };
     }
@@ -179,13 +235,14 @@ export class ConversationService {
       input.identity.userId,
     );
 
+    const trustedIntrospection = input.identity.isOwner && Boolean(input.trustedIntrospection);
     const systemPrompt = buildSystemPrompt({
       identity: input.identity,
       chatType: input.chatType,
       memories,
       currentTime: this.currentTime(),
       timezone: this.config.JYNX_TIMEZONE,
-      trustedChannel: input.trustedIntrospection ?? false,
+      trustedChannel: trustedIntrospection,
     });
 
     const messages: ChatMessage[] = [
@@ -193,9 +250,7 @@ export class ConversationService {
       ...historyToChatMessages(history, isGroup),
     ];
 
-    const userContent = isGroup
-      ? `${input.displayName}: ${input.userText}`
-      : input.userText;
+    const userContent = isGroup ? `${input.displayName}: ${input.userText}` : input.userText;
 
     if (this.referencesPast(input.userText)) {
       try {
@@ -234,9 +289,7 @@ export class ConversationService {
       try {
         const results = await this.webSearch.search(input.userText);
         if (results.length > 0) {
-          const context = results
-            .map((r) => `- ${r.title}: ${r.snippet} (${r.url})`)
-            .join('\n');
+          const context = results.map((r) => `- ${r.title}: ${r.snippet} (${r.url})`).join('\n');
           messages.push({
             role: 'system',
             content: `Web search results for the user's message (use to fact-check, cite naturally, do not dump raw):\n${context}`,
@@ -247,7 +300,7 @@ export class ConversationService {
       }
     }
 
-    if (input.trustedIntrospection && this.introspection?.isEnabled) {
+    if (trustedIntrospection && this.introspection?.isEnabled) {
       try {
         const request = this.detectIntrospection(input.userText);
         if (request) {
@@ -270,10 +323,11 @@ export class ConversationService {
     messages.push({ role: 'user', content: userContent });
 
     const result = await this.model.complete({ messages, temperature: 0.85 });
-    let reply = result.content.trim();
+    let reply = normalizeReply(result.content);
 
-    if (reply.length > this.config.MAX_RESPONSE_CHARS) {
-      reply = reply.slice(0, this.config.MAX_RESPONSE_CHARS);
+    const maxChars = Math.min(this.config.MAX_RESPONSE_CHARS, 4096);
+    if (reply.length > maxChars) {
+      reply = reply.slice(0, maxChars);
     }
 
     if (reply.length === 0) {

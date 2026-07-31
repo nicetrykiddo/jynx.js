@@ -42,16 +42,21 @@ function sanitizeBranch(raw: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9/-]/g, '-')
     .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
-  const withPrefix = cleaned.startsWith('jynx/') ? cleaned : `jynx/${cleaned}`;
-  return withPrefix.slice(0, 80);
+    .replace(/\/+/g, '/')
+    .replace(/^[-/]+|[-/]+$/g, '')
+    .replace(/^jynx\/+/, '');
+  return `jynx/${cleaned || 'change'}`.slice(0, 80).replace(/[-/]+$/, '');
 }
 
 export class AgentRunner {
   public constructor(
     private readonly config: Pick<
       AppConfig,
-      'GITHUB_TOKEN' | 'GITHUB_REPO' | 'GITHUB_DEFAULT_BRANCH' | 'MAX_AGENT_STEPS'
+      | 'GITHUB_TOKEN'
+      | 'GITHUB_REPO'
+      | 'GITHUB_DEFAULT_BRANCH'
+      | 'MAX_AGENT_STEPS'
+      | 'MAX_ACTIVE_RUNS_PER_USER'
     >,
     private readonly repository: Repository,
     private readonly model: ModelProvider,
@@ -95,7 +100,11 @@ export class AgentRunner {
     };
   }
 
-  public async execute(idea: string, plan: AgentPlan, requestedBy: number | null): Promise<RunnerResult> {
+  public async execute(
+    idea: string,
+    plan: AgentPlan,
+    requestedBy: number | null,
+  ): Promise<RunnerResult> {
     const task = await this.repository.createTask({
       userId: requestedBy,
       title: plan.summary.slice(0, 120),
@@ -103,6 +112,15 @@ export class AgentRunner {
       steps: plan.steps,
       state: { branch: plan.branch, testPlan: plan.testPlan },
     });
+
+    if (requestedBy !== null) {
+      const activeRuns = await this.repository.countActiveRunsForUser(requestedBy);
+      if (activeRuns > this.config.MAX_ACTIVE_RUNS_PER_USER) {
+        const error = `active run limit reached (${this.config.MAX_ACTIVE_RUNS_PER_USER})`;
+        await this.repository.updateTask(task.id, { status: 'failed', lastError: error });
+        return { taskId: task.id, status: 'failed', error };
+      }
+    }
 
     try {
       await this.repository.updateTask(task.id, { status: 'running' });

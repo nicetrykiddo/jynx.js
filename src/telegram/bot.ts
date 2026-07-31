@@ -40,6 +40,13 @@ function displayName(ctx: Context): string {
   return [from.first_name, from.last_name].filter(Boolean).join(' ') || String(from.id);
 }
 
+function requesterLabel(ctx: Context): string {
+  const from = ctx.from;
+  if (!from) return 'unknown';
+  const name = [from.first_name, from.last_name].filter(Boolean).join(' ');
+  return from.username ? `${name || from.username} (@${from.username})` : name || String(from.id);
+}
+
 async function isMentioned(ctx: Context, botUsername: string): Promise<boolean> {
   const text = ctx.message?.text ?? ctx.message?.caption ?? '';
   if (!text) {
@@ -52,12 +59,30 @@ async function isMentioned(ctx: Context, botUsername: string): Promise<boolean> 
   return /\bjynx\b/i.test(text);
 }
 
+export function parseNaturalEdit(text: string): string | null {
+  const match = text.match(/^edit(?: this| that| your(?: last)? message)?(?: to|:)\s+([\s\S]+)$/i);
+  return match?.[1]?.trim() || null;
+}
+
 export function createBot(deps: BotDependencies): Bot {
   const { config, logger, auth, conversation, repository, intent, agentRunner } = deps;
   const bot = new Bot(config.TELEGRAM_BOT_TOKEN);
   const reporter = new Reporter(bot.api, config, logger);
-  const proposals = new ProposalService({ repository, reporter, intent, runner: agentRunner, logger });
-  const approvalFlow = new ApprovalFlow({ config, auth, repository, reporter, runner: agentRunner, logger });
+  const proposals = new ProposalService({
+    repository,
+    reporter,
+    intent,
+    runner: agentRunner,
+    logger,
+  });
+  const approvalFlow = new ApprovalFlow({
+    config,
+    auth,
+    repository,
+    reporter,
+    runner: agentRunner,
+    logger,
+  });
   const lastReplyAt = new Map<number, number>();
 
   bot.catch((error) => {
@@ -84,6 +109,39 @@ export function createBot(deps: BotDependencies): Bot {
     }
     const identity = auth.identify(ctx.from.id);
     await ctx.reply(`id: ${identity.userId}\nrole: ${identity.role}`);
+  });
+
+  bot.command('edit', async (ctx) => {
+    if (!ctx.from || !ctx.chat || !auth.isOwner(ctx.from.id)) {
+      await ctx.reply('only the owner can edit my messages.');
+      return;
+    }
+    const raw = (ctx.match ?? '').toString().trim();
+    const replied = ctx.message?.reply_to_message;
+    let messageId = replied?.from?.id === ctx.me.id ? replied.message_id : null;
+    let content = raw;
+    if (messageId === null) {
+      const match = raw.match(/^(\d+)\s+([\s\S]+)$/);
+      messageId = match?.[1] ? Number(match[1]) : null;
+      content = match?.[2]?.trim() ?? '';
+    }
+    if (!messageId || !content || content.length > 4096) {
+      await ctx.reply(
+        'reply to one of my messages with /edit <new text>, or use /edit <message id> <new text>.',
+      );
+      return;
+    }
+    try {
+      await ctx.api.editMessageText(ctx.chat.id, messageId, content);
+      try {
+        await repository.updateAssistantMessageContent(ctx.chat.id, messageId, content);
+      } catch (error) {
+        await reporter.reportError('persist.message.edit', error);
+      }
+    } catch (error) {
+      await reporter.reportError('message.edit', error);
+      await ctx.reply("couldn't edit that message.");
+    }
   });
 
   const parseApprovalId = (raw: string): number | null => {
@@ -151,12 +209,6 @@ export function createBot(deps: BotDependencies): Bot {
           ? await approvalFlow.approve(from.id, id)
           : await approvalFlow.reject(from.id, id);
       await ctx.answerCallbackQuery({ text: result.reply.slice(0, 200) });
-      try {
-        await ctx.editMessageReplyMarkup({ reply_markup: undefined });
-      } catch {
-        // markup may already be gone; ignore
-      }
-      await ctx.reply(result.reply);
     } catch (error) {
       await ctx.answerCallbackQuery({ text: 'something broke, check logs.', show_alert: true });
       await reporter.reportError(`callback.${action}`, error);
@@ -172,7 +224,13 @@ export function createBot(deps: BotDependencies): Bot {
       return;
     }
     const arg = (ctx.match ?? '').toString().trim();
-    const valid: ParticipationMode[] = ['silent', 'mentioned_only', 'balanced', 'social', 'chaotic'];
+    const valid: ParticipationMode[] = [
+      'silent',
+      'mentioned_only',
+      'balanced',
+      'social',
+      'chaotic',
+    ];
     if (!valid.includes(arg as ParticipationMode)) {
       await ctx.reply(`usage: /mode <${valid.join('|')}>`);
       return;
@@ -197,6 +255,25 @@ export function createBot(deps: BotDependencies): Bot {
     const identity = auth.identify(ctx.from.id);
     const name = displayName(ctx);
 
+    if (identity.isOwner && ctx.message.reply_to_message?.from?.id === ctx.me.id) {
+      const edited = parseNaturalEdit(text);
+      if (edited) {
+        try {
+          const messageId = ctx.message.reply_to_message.message_id;
+          const content = edited.slice(0, 4096);
+          await ctx.api.editMessageText(ctx.chat.id, messageId, content);
+          try {
+            await repository.updateAssistantMessageContent(ctx.chat.id, messageId, content);
+          } catch (error) {
+            await reporter.reportError('persist.message.edit', error);
+          }
+        } catch (error) {
+          await reporter.reportError('message.edit', error);
+        }
+        return;
+      }
+    }
+
     try {
       await repository.upsertChat({
         id: ctx.chat.id,
@@ -211,18 +288,8 @@ export function createBot(deps: BotDependencies): Bot {
         isOwner: identity.isOwner,
         isAdmin: identity.isAdmin,
       });
-
-      await repository.addMessage({
-        chatId: ctx.chat.id,
-        userId: ctx.from.id,
-        telegramMessageId: ctx.message.message_id,
-        replyToMessageId: ctx.message.reply_to_message?.message_id ?? null,
-        role: 'user',
-        content: text,
-        metadata: { displayName: name },
-      });
     } catch (error) {
-      await reporter.reportError('persist.message', error);
+      await reporter.reportError('persist.user', error);
     }
 
     const botUsername = ctx.me.username;
@@ -245,12 +312,16 @@ export function createBot(deps: BotDependencies): Bot {
     const lastAt = lastReplyAt.get(ctx.chat.id) ?? 0;
     const secondsSinceLastReply = (now - lastAt) / 1000;
     let recentAssistantCount = 0;
+    let hourlyAssistantCount = 0;
     if (isGroup) {
       try {
-        recentAssistantCount = await repository.countRecentAssistantMessages(
-          ctx.chat.id,
-          config.PROACTIVE_REPLY_COOLDOWN_SECONDS * 1000,
-        );
+        [recentAssistantCount, hourlyAssistantCount] = await Promise.all([
+          repository.countRecentAssistantMessages(
+            ctx.chat.id,
+            config.PROACTIVE_REPLY_COOLDOWN_SECONDS * 1000,
+          ),
+          repository.countRecentAssistantMessages(ctx.chat.id, 60 * 60 * 1000),
+        ]);
       } catch (error) {
         await reporter.reportError('count.assistant', error);
       }
@@ -266,21 +337,37 @@ export function createBot(deps: BotDependencies): Bot {
       isMentioned: mentioned,
       isReplyToBot,
       recentAssistantCount,
+      hourlyAssistantCount,
+      proactiveRepliesPerHour: config.PROACTIVE_REPLIES_PER_HOUR,
       secondsSinceLastReply,
       recentlyEngaged,
       mentionsBotByName,
     });
 
     if (!decision.shouldConsiderReply) {
+      try {
+        await repository.addMessage({
+          chatId: ctx.chat.id,
+          userId: ctx.from.id,
+          telegramMessageId: ctx.message.message_id,
+          replyToMessageId: ctx.message.reply_to_message?.message_id ?? null,
+          role: 'user',
+          content: text,
+          metadata: { displayName: name },
+        });
+      } catch (error) {
+        await reporter.reportError('persist.message.silent', error);
+      }
       return;
     }
 
     try {
       await ctx.replyWithChatAction('typing');
       const isTrustedChat =
-        (isPrivate && identity.isOwner) ||
-        ctx.chat.id === config.JYNX_APPROVAL_CHAT_ID ||
-        ctx.chat.id === config.JYNX_ERROR_CHAT_ID;
+        identity.isOwner &&
+        (isPrivate ||
+          ctx.chat.id === config.JYNX_APPROVAL_CHAT_ID ||
+          ctx.chat.id === config.JYNX_ERROR_CHAT_ID);
       const result = await conversation.respond({
         identity,
         chatId: ctx.chat.id,
@@ -290,7 +377,38 @@ export function createBot(deps: BotDependencies): Bot {
         trustedIntrospection: isTrustedChat,
       });
 
-      const sent = await ctx.reply(result.reply, {
+      try {
+        await repository.addMessage({
+          chatId: ctx.chat.id,
+          userId: ctx.from.id,
+          telegramMessageId: ctx.message.message_id,
+          replyToMessageId: ctx.message.reply_to_message?.message_id ?? null,
+          role: 'user',
+          content: text,
+          metadata: { displayName: name },
+        });
+      } catch (error) {
+        await reporter.reportError('persist.message.user', error);
+      }
+
+      let reply = result.reply;
+      try {
+        const proposal = await proposals.considerMessage({
+          userId: ctx.from.id,
+          requestedByName: requesterLabel(ctx),
+          chatId: ctx.chat.id,
+          messageId: ctx.message.message_id,
+          text,
+        });
+        if (proposal?.link) {
+          const footer = `Approval #${proposal.approvalId}: ${proposal.link}`;
+          reply = `${reply.slice(0, 4095 - footer.length)}\n${footer}`;
+        }
+      } catch (error) {
+        await reporter.reportError('proposals.consider', error);
+      }
+
+      const sent = await ctx.reply(reply, {
         reply_parameters: isGroup ? { message_id: ctx.message.message_id } : undefined,
       });
 
@@ -302,19 +420,11 @@ export function createBot(deps: BotDependencies): Bot {
         telegramMessageId: sent.message_id,
         replyToMessageId: ctx.message.message_id,
         role: 'assistant',
-        content: result.reply,
+        content: reply,
         metadata: { displayName: 'Jynx' },
       });
     } catch (error) {
       await reporter.reportError('conversation.respond', error);
-    }
-
-    if (identity.isOwner) {
-      try {
-        await proposals.considerMessage({ userId: ctx.from.id, text });
-      } catch (error) {
-        await reporter.reportError('proposals.consider', error);
-      }
     }
   });
 

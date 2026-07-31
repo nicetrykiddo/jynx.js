@@ -9,6 +9,8 @@ describe('decideParticipation', () => {
       isMentioned: false,
       isReplyToBot: false,
       recentAssistantCount: 0,
+      hourlyAssistantCount: 0,
+      proactiveRepliesPerHour: 4,
       secondsSinceLastReply: 0,
       recentlyEngaged: false,
       mentionsBotByName: false,
@@ -24,6 +26,8 @@ describe('decideParticipation', () => {
       isMentioned: true,
       isReplyToBot: false,
       recentAssistantCount: 0,
+      hourlyAssistantCount: 4,
+      proactiveRepliesPerHour: 4,
       secondsSinceLastReply: 999,
       recentlyEngaged: false,
       mentionsBotByName: false,
@@ -39,6 +43,8 @@ describe('decideParticipation', () => {
       isMentioned: false,
       isReplyToBot: false,
       recentAssistantCount: 0,
+      hourlyAssistantCount: 0,
+      proactiveRepliesPerHour: 4,
       secondsSinceLastReply: 30,
       recentlyEngaged: true,
       mentionsBotByName: true,
@@ -53,10 +59,28 @@ describe('decideParticipation', () => {
       isMentioned: false,
       isReplyToBot: false,
       recentAssistantCount: 0,
+      hourlyAssistantCount: 0,
+      proactiveRepliesPerHour: 4,
       secondsSinceLastReply: 999,
       recentlyEngaged: false,
       mentionsBotByName: false,
     });
     expect(decision.shouldConsiderReply).toBe(false);
+  });
+
+  it('stops proactive replies at the configured hourly limit', () => {
+    const decision = decideParticipation({
+      mode: 'chaotic',
+      isPrivate: false,
+      isMentioned: false,
+      isReplyToBot: false,
+      recentAssistantCount: 0,
+      hourlyAssistantCount: 4,
+      proactiveRepliesPerHour: 4,
+      secondsSinceLastReply: 999,
+      recentlyEngaged: false,
+      mentionsBotByName: false,
+    });
+    expect(decision.reason).toBe('hourly proactive limit reached');
   });
 });

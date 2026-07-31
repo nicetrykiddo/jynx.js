@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import type { AppConfig } from '../config.js';
 import type { Logger } from '../core/logger.js';
@@ -34,11 +34,13 @@ export class IntrospectionService {
   }
 
   private resolveWithin(target: string): string {
-    const resolved = path.resolve(this.root, target);
-    if (resolved !== this.root && !resolved.startsWith(this.root + path.sep)) {
+    const root = realpathSync(this.root);
+    const resolved = path.resolve(root, target);
+    const real = existsSync(resolved) ? realpathSync(resolved) : resolved;
+    if (real !== root && !real.startsWith(root + path.sep)) {
       throw new Error(`path escapes project root: ${target}`);
     }
-    return resolved;
+    return real;
   }
 
   public readOwnFile(relativePath: string): string {
@@ -47,7 +49,11 @@ export class IntrospectionService {
     }
     const blocked = ['.env', 'node_modules', '.git'];
     const normalized = relativePath.replace(/\\/g, '/');
-    if (blocked.some((b) => normalized === b || normalized.startsWith(`${b}/`) || normalized.includes(`/${b}/`))) {
+    if (
+      blocked.some(
+        (b) => normalized === b || normalized.startsWith(`${b}/`) || normalized.includes(`/${b}/`),
+      )
+    ) {
       throw new Error('that path is off-limits (secrets/internals)');
     }
     const resolved = this.resolveWithin(relativePath);
@@ -55,7 +61,9 @@ export class IntrospectionService {
       throw new Error(`file not found: ${relativePath}`);
     }
     const content = readFileSync(resolved, 'utf8');
-    return content.length > MAX_FILE_BYTES ? content.slice(0, MAX_FILE_BYTES) + '\n... (truncated)' : content;
+    return content.length > MAX_FILE_BYTES
+      ? content.slice(0, MAX_FILE_BYTES) + '\n... (truncated)'
+      : content;
   }
 
   public listOwnFiles(relativeDir = '.'): string[] {
@@ -68,7 +76,9 @@ export class IntrospectionService {
     }
     const entries = readdirSync(resolved, { withFileTypes: true });
     return entries
-      .filter((e) => !['node_modules', '.git', '.env'].includes(e.name) && !e.name.startsWith('.env'))
+      .filter(
+        (e) => !['node_modules', '.git', '.env'].includes(e.name) && !e.name.startsWith('.env'),
+      )
       .map((e) => (e.isDirectory() ? `${e.name}/` : e.name))
       .sort();
   }

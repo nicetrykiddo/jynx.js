@@ -81,6 +81,23 @@ export class Repository {
     return row as Message;
   }
 
+  public async updateAssistantMessageContent(
+    chatId: number,
+    telegramMessageId: number,
+    content: string,
+  ): Promise<void> {
+    await this.db
+      .update(messages)
+      .set({ content })
+      .where(
+        and(
+          eq(messages.chatId, chatId),
+          eq(messages.telegramMessageId, telegramMessageId),
+          eq(messages.role, 'assistant'),
+        ),
+      );
+  }
+
   public async getRecentMessages(chatId: number, limit: number): Promise<Message[]> {
     const rows = await this.db
       .select()
@@ -91,11 +108,7 @@ export class Repository {
     return rows.reverse();
   }
 
-  public async searchMessages(
-    chatId: number,
-    query: string,
-    limit = 20,
-  ): Promise<Message[]> {
+  public async searchMessages(chatId: number, query: string, limit = 20): Promise<Message[]> {
     const pattern = `%${query.replace(/[%_]/g, (m) => `\\${m}`)}%`;
     const rows = await this.db
       .select()
@@ -124,10 +137,7 @@ export class Repository {
     return rows.reverse();
   }
 
-  public async countRecentAssistantMessages(
-    chatId: number,
-    sinceMs: number,
-  ): Promise<number> {
+  public async countRecentAssistantMessages(chatId: number, sinceMs: number): Promise<number> {
     const since = new Date(Date.now() - sinceMs);
     const rows = await this.db
       .select({ count: sql<number>`count(*)::int` })
@@ -226,24 +236,56 @@ export class Repository {
 
   public async createApproval(input: {
     requestedBy?: number | null;
+    requestedByName?: string | null;
     kind: string;
     stage?: string;
     summary: string;
     payload?: unknown;
     taskId?: number | null;
+    sourceChatId?: number | null;
+    sourceMessageId?: number | null;
   }): Promise<Approval> {
     const [row] = await this.db
       .insert(approvals)
       .values({
         requestedBy: input.requestedBy ?? null,
+        requestedByName: input.requestedByName ?? null,
         kind: input.kind,
         stage: input.stage ?? 'idea',
         summary: input.summary,
         payload: input.payload ?? null,
         taskId: input.taskId ?? null,
+        sourceChatId: input.sourceChatId ?? null,
+        sourceMessageId: input.sourceMessageId ?? null,
       })
       .returning();
     return row as Approval;
+  }
+
+  public async setApprovalMessageRef(
+    id: number,
+    approvalChatId: number,
+    approvalMessageId: number,
+  ): Promise<void> {
+    await this.db
+      .update(approvals)
+      .set({ approvalChatId, approvalMessageId })
+      .where(eq(approvals.id, id));
+  }
+
+  public async updateApprovalStagePlan(
+    id: number,
+    summary: string,
+    payload: unknown,
+  ): Promise<Approval | undefined> {
+    const [row] = await this.db
+      .update(approvals)
+      .set({ stage: 'plan', summary, payload })
+      .where(
+        and(eq(approvals.id, id), eq(approvals.status, 'pending'), eq(approvals.stage, 'idea')),
+      )
+      .returning();
+    return row;
   }
 
   public async listPendingApprovals(): Promise<Approval[]> {
@@ -281,7 +323,15 @@ export class Repository {
     approvals: number;
     pendingApprovals: number;
   }> {
-    const count = async (table: typeof chats | typeof users | typeof messages | typeof memories | typeof tasks | typeof approvals): Promise<number> => {
+    const count = async (
+      table:
+        | typeof chats
+        | typeof users
+        | typeof messages
+        | typeof memories
+        | typeof tasks
+        | typeof approvals,
+    ): Promise<number> => {
       const rows = await this.db.select({ count: sql<number>`count(*)::int` }).from(table);
       return rows[0]?.count ?? 0;
     };
@@ -300,7 +350,11 @@ export class Repository {
     };
   }
 
-  public async advanceApprovalStage(id: number, stage: string, taskId?: number | null): Promise<void> {
+  public async advanceApprovalStage(
+    id: number,
+    stage: string,
+    taskId?: number | null,
+  ): Promise<void> {
     await this.db
       .update(approvals)
       .set({ stage, taskId: taskId ?? null })

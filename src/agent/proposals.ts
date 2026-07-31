@@ -3,6 +3,7 @@ import type { Reporter } from '../core/reporter.js';
 import type { Repository } from '../storage/repository.js';
 import type { IntentDetector } from './intent.js';
 import type { AgentRunner } from './runner.js';
+import { telegramMessageLink } from '../core/reporter.js';
 
 export interface ProposalServiceDeps {
   repository: Repository;
@@ -17,19 +18,42 @@ export class ProposalService {
 
   public async considerMessage(input: {
     userId: number | null;
+    requestedByName: string;
+    chatId: number;
+    messageId: number;
     text: string;
-  }): Promise<void> {
-    const detected = await this.deps.intent.detect(input.text);
+  }): Promise<{ approvalId: number; link: string | null } | null> {
+    const history = await this.deps.repository.getRecentMessages(input.chatId, 12);
+    const recentContext = history
+      .filter((message) => message.role !== 'user' || message.telegramMessageId !== input.messageId)
+      .slice(-11)
+      .map((message) => {
+        const metadata = (message.metadata ?? {}) as { displayName?: string };
+        const name = message.role === 'assistant' ? 'Jynx' : (metadata.displayName ?? 'user');
+        return `${name}: ${message.content}`;
+      })
+      .join('\n');
+    const detected = await this.deps.intent.detect(input.text, recentContext);
     if (!detected.isProposal) {
-      return;
+      return null;
     }
 
     const approval = await this.deps.repository.createApproval({
       requestedBy: input.userId,
+      requestedByName: input.requestedByName,
       kind: detected.kind,
       stage: 'idea',
       summary: detected.title,
-      payload: { summary: detected.summary, idea: input.text },
+      payload: {
+        summary: detected.summary,
+        idea: [
+          detected.summary,
+          `Latest request: ${input.text}`,
+          ...(recentContext ? [`Recent context:\n${recentContext}`] : []),
+        ].join('\n\n'),
+      },
+      sourceChatId: input.chatId,
+      sourceMessageId: input.messageId,
     });
 
     const text = [
@@ -37,10 +61,21 @@ export class ProposalService {
       detected.title,
       '',
       detected.summary,
+      `Latest request: ${input.text.slice(0, 1000)}`,
+      '',
+      `Requested by: ${input.requestedByName} (${input.userId ?? 'unknown'})`,
+      ...(telegramMessageLink(input.chatId, input.messageId)
+        ? [`Source message: ${telegramMessageLink(input.chatId, input.messageId)}`]
+        : []),
       '',
       'Tap a button below to plan it or drop it.',
     ].join('\n');
 
-    await this.deps.reporter.postProposal(text, approval.id);
+    const posted = await this.deps.reporter.postProposal(text, approval.id);
+    if (!posted) {
+      return { approvalId: approval.id, link: null };
+    }
+    await this.deps.repository.setApprovalMessageRef(approval.id, posted.chatId, posted.messageId);
+    return { approvalId: approval.id, link: posted.link };
   }
 }

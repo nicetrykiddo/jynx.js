@@ -3,6 +3,7 @@ import {
   CommandExecutor,
   CommandNotAllowedError,
   PathEscapeError,
+  redactCommandArgs,
 } from '../src/agent/executor.js';
 
 const logger = {
@@ -44,5 +45,11 @@ describe('CommandExecutor', () => {
     const executor = makeExecutor();
     expect(() => executor.assertPath('../../etc/passwd')).toThrow(PathEscapeError);
     expect(() => executor.assertPath('src/file.ts')).not.toThrow();
+  });
+
+  it('redacts credentials embedded in command URLs', () => {
+    expect(redactCommandArgs(['https://user:secret@example.com/repo.git'])).toEqual([
+      'https://[redacted]@example.com/repo.git',
+    ]);
   });
 });

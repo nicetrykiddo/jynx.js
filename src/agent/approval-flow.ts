@@ -3,7 +3,9 @@ import type { AuthService } from '../core/auth.js';
 import type { Logger } from '../core/logger.js';
 import type { Reporter } from '../core/reporter.js';
 import type { Repository } from '../storage/repository.js';
+import type { Approval } from '../storage/schema.js';
 import type { AgentPlan, AgentRunner } from './runner.js';
+import { telegramMessageLink } from '../core/reporter.js';
 
 export interface ApprovalFlowDeps {
   config: Pick<AppConfig, 'GITHUB_REPO'>;
@@ -34,6 +36,17 @@ function asPlanPayload(payload: unknown): PlanPayload {
   return {};
 }
 
+function approvalContext(approval: Approval): string[] {
+  const sourceLink =
+    approval.sourceChatId && approval.sourceMessageId
+      ? telegramMessageLink(approval.sourceChatId, approval.sourceMessageId)
+      : null;
+  return [
+    `Requested by: ${approval.requestedByName ?? 'unknown'} (${approval.requestedBy ?? 'unknown'})`,
+    ...(sourceLink ? [`Source message: ${sourceLink}`] : []),
+  ];
+}
+
 export class ApprovalFlow {
   public constructor(private readonly deps: ApprovalFlowDeps) {}
 
@@ -51,7 +64,7 @@ export class ApprovalFlow {
     }
 
     if (approval.stage === 'idea') {
-      return this.approveIdea(userId, approvalId);
+      return this.approveIdea(approvalId);
     }
     if (approval.stage === 'plan') {
       return this.approvePlan(userId, approvalId);
@@ -59,7 +72,7 @@ export class ApprovalFlow {
     return { reply: `approval #${approvalId} is in an unknown stage.` };
   }
 
-  private async approveIdea(userId: number, approvalId: number): Promise<DecisionResult> {
+  private async approveIdea(approvalId: number): Promise<DecisionResult> {
     const approval = await this.deps.repository.getApproval(approvalId);
     if (!approval) {
       return { reply: `approval #${approvalId} not found.` };
@@ -77,18 +90,17 @@ export class ApprovalFlow {
       return { reply: `couldn't draft a plan for #${approvalId}: ${message.slice(0, 200)}` };
     }
 
-    await this.deps.repository.decideApproval(approvalId, 'approved', userId);
-
-    const planApproval = await this.deps.repository.createApproval({
-      requestedBy: approval.requestedBy,
-      kind: approval.kind,
-      stage: 'plan',
-      summary: plan.summary.slice(0, 120),
-      payload: { idea, plan },
-    });
+    const updated = await this.deps.repository.updateApprovalStagePlan(
+      approvalId,
+      plan.summary.slice(0, 120),
+      { ...payload, idea, plan },
+    );
+    if (!updated) {
+      return { reply: `approval #${approvalId} changed while the plan was being drafted.` };
+    }
 
     const text = [
-      `Plan #${planApproval.id} for idea #${approvalId}`,
+      `Approval #${approvalId} — plan ready`,
       `branch: ${plan.branch}`,
       '',
       'steps:',
@@ -97,11 +109,15 @@ export class ApprovalFlow {
       'tests:',
       ...plan.testPlan.map((s) => `- ${s}`),
       '',
+      ...approvalContext(updated),
+      '',
       'Tap a button below to build it or drop it.',
     ].join('\n');
 
-    await this.deps.reporter.postProposal(text, planApproval.id);
-    return { reply: `idea #${approvalId} approved. drafted plan #${planApproval.id}.` };
+    await this.editApproval(updated, text, approvalId);
+    return {
+      reply: `approval #${approvalId} is now a plan. review it, then approve again to build.`,
+    };
   }
 
   private async approvePlan(userId: number, approvalId: number): Promise<DecisionResult> {
@@ -118,34 +134,44 @@ export class ApprovalFlow {
       return { reply: `approval #${approvalId} has no plan payload.` };
     }
 
-    await this.deps.repository.decideApproval(approvalId, 'approved', userId);
+    const decided = await this.deps.repository.decideApproval(approvalId, 'approved', userId);
+    if (!decided) {
+      return { reply: `approval #${approvalId} was already decided.` };
+    }
 
-    void this.runInBackground(idea, plan, approval.requestedBy ?? null, approvalId);
+    await this.editApproval(
+      decided,
+      `✅ Approval #${approvalId} approved\n\nBuilding on branch ${plan.branch}.\n\n${approvalContext(decided).join('\n')}`,
+    );
+    void this.runInBackground(idea, plan, decided);
 
-    return { reply: `plan #${approvalId} approved. building on branch ${plan.branch}, i'll post the PR when it's up.` };
+    return {
+      reply: `plan #${approvalId} approved. building on branch ${plan.branch}, i'll post the PR when it's up.`,
+    };
   }
 
-  private async runInBackground(
-    idea: string,
-    plan: AgentPlan,
-    requestedBy: number | null,
-    approvalId: number,
-  ): Promise<void> {
+  private async runInBackground(idea: string, plan: AgentPlan, approval: Approval): Promise<void> {
+    const approvalId = approval.id;
     try {
-      const result = await this.deps.runner.execute(idea, plan, requestedBy);
+      const result = await this.deps.runner.execute(idea, plan, approval.requestedBy ?? null);
       if (result.status === 'done') {
-        await this.deps.reporter.postProposal(
-          `Plan #${approvalId} built. PR: ${result.prUrl ?? '(no url)'}`,
+        await this.editApproval(
+          approval,
+          `✅ Approval #${approvalId} built\nPR: ${result.prUrl ?? '(no url)'}\n\n${approvalContext(approval).join('\n')}`,
         );
       } else {
-        await this.deps.reporter.postProposal(
-          `Plan #${approvalId} failed: ${(result.error ?? 'unknown').slice(0, 300)}`,
+        await this.editApproval(
+          approval,
+          `⚠️ Approval #${approvalId} failed\n${(result.error ?? 'unknown').slice(0, 300)}\n\n${approvalContext(approval).join('\n')}`,
         );
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.deps.logger.error({ err: message, approvalId }, 'background run failed');
-      await this.deps.reporter.postProposal(`Plan #${approvalId} crashed: ${message.slice(0, 300)}`);
+      await this.editApproval(
+        approval,
+        `⚠️ Approval #${approvalId} crashed\n${message.slice(0, 300)}\n\n${approvalContext(approval).join('\n')}`,
+      );
     }
   }
 
@@ -154,10 +180,38 @@ export class ApprovalFlow {
       return { reply: 'only the owner can reject.' };
     }
 
+    const approval = await this.deps.repository.getApproval(approvalId);
+    if (!approval) {
+      return { reply: `approval #${approvalId} not found.` };
+    }
     const decided = await this.deps.repository.decideApproval(approvalId, 'rejected', userId);
     if (!decided) {
       return { reply: `approval #${approvalId} not found or already decided.` };
     }
+    await this.editApproval(
+      decided,
+      `❌ Approval #${approvalId} rejected\n${decided.summary}\n\n${approvalContext(decided).join('\n')}`,
+    );
     return { reply: `approval #${approvalId} rejected.` };
+  }
+
+  private async editApproval(approval: Approval, text: string, approvalId?: number): Promise<void> {
+    if (approval.approvalChatId && approval.approvalMessageId) {
+      const edited = await this.deps.reporter.editProposal(
+        approval.approvalChatId,
+        approval.approvalMessageId,
+        text,
+        approvalId,
+      );
+      if (edited) return;
+    }
+    const posted = await this.deps.reporter.postProposal(text, approvalId);
+    if (posted) {
+      await this.deps.repository.setApprovalMessageRef(
+        approval.id,
+        posted.chatId,
+        posted.messageId,
+      );
+    }
   }
 }

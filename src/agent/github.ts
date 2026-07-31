@@ -35,15 +35,15 @@ export class GitHubService {
 
   public async createBranch(branch: string): Promise<void> {
     this.assertConfigured();
-    await this.executor.run('git', ['checkout', this.config.GITHUB_DEFAULT_BRANCH]);
-    await this.executor.run('git', ['pull', '--ff-only']);
-    await this.executor.run('git', ['checkout', '-b', branch]);
+    await this.executor.runChecked('git', ['checkout', this.config.GITHUB_DEFAULT_BRANCH]);
+    await this.executor.runChecked('git', ['pull', '--ff-only']);
+    await this.executor.runChecked('git', ['checkout', '-b', branch]);
   }
 
   public async commitAll(message: string): Promise<void> {
     this.assertConfigured();
-    await this.executor.run('git', ['add', '-A']);
-    await this.executor.run('git', ['commit', '-m', message]);
+    await this.executor.runChecked('git', ['add', '-A']);
+    await this.executor.runChecked('git', ['commit', '-m', message]);
   }
 
   public async push(branch: string): Promise<void> {
@@ -51,7 +51,12 @@ export class GitHubService {
     const token = this.config.GITHUB_TOKEN as string;
     const repo = this.config.GITHUB_REPO as string;
     const remote = `https://x-access-token:${token}@github.com/${repo}.git`;
-    await this.executor.run('git', ['push', remote, `${branch}:${branch}`, '--force-with-lease']);
+    await this.executor.runChecked('git', [
+      'push',
+      remote,
+      `${branch}:${branch}`,
+      '--force-with-lease',
+    ]);
   }
 
   public async openPullRequest(input: OpenPullRequestInput): Promise<PullRequestResult> {

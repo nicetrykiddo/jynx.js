@@ -186,7 +186,9 @@ const envSchema = z.object({
   AGENT_ALLOWED_COMMANDS: z
     .string()
     .trim()
-    .default('git,npm,npx,node,pnpm,yarn,ls,cat,rg,grep,mkdir,touch,cp,mv,rm,echo,test,vitest,tsc,eslint,prettier')
+    .default(
+      'git,npm,npx,node,pnpm,yarn,ls,cat,rg,grep,mkdir,touch,cp,mv,rm,echo,test,vitest,tsc,eslint,prettier',
+    )
     .transform((raw) => [
       ...new Set(
         raw
@@ -209,7 +211,9 @@ export class ConfigurationError extends Error {
   }
 }
 
-export function loadConfig(environment: Record<string, string | undefined> = process.env): AppConfig {
+export function loadConfig(
+  environment: Record<string, string | undefined> = process.env,
+): AppConfig {
   const result = envSchema.safeParse(environment);
 
   if (!result.success) {

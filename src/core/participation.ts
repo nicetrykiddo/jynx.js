@@ -6,6 +6,8 @@ export interface ParticipationInput {
   isMentioned: boolean;
   isReplyToBot: boolean;
   recentAssistantCount: number;
+  hourlyAssistantCount: number;
+  proactiveRepliesPerHour: number;
   secondsSinceLastReply: number;
   recentlyEngaged: boolean;
   mentionsBotByName: boolean;
@@ -39,7 +41,15 @@ export function decideParticipation(input: ParticipationInput): ParticipationDec
   }
 
   if (input.mode === 'silent' || input.mode === 'mentioned_only') {
-    return { shouldConsiderReply: false, forced: false, reason: 'mode does not allow proactive replies' };
+    return {
+      shouldConsiderReply: false,
+      forced: false,
+      reason: 'mode does not allow proactive replies',
+    };
+  }
+
+  if (input.hourlyAssistantCount >= input.proactiveRepliesPerHour) {
+    return { shouldConsiderReply: false, forced: false, reason: 'hourly proactive limit reached' };
   }
 
   let chance = PROACTIVE_BASE_CHANCE[input.mode];

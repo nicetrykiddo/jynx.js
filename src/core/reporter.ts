@@ -3,6 +3,20 @@ import { InlineKeyboard } from 'grammy';
 import type { AppConfig } from '../config.js';
 import type { Logger } from './logger.js';
 
+export interface ProposalMessage {
+  chatId: number;
+  messageId: number;
+  link: string | null;
+}
+
+export function telegramMessageLink(chatId: number, messageId: number): string | null {
+  const id = String(chatId);
+  if (id.startsWith('-100')) {
+    return `https://t.me/c/${id.slice(4)}/${messageId}`;
+  }
+  return null;
+}
+
 export class Reporter {
   private readonly recentErrors = new Map<string, number>();
 
@@ -51,7 +65,10 @@ export class Reporter {
     }
   }
 
-  public async postProposal(text: string, approvalId?: number): Promise<void> {
+  public async postProposal(
+    text: string,
+    approvalId?: number,
+  ): Promise<ProposalMessage | undefined> {
     if (!this.config.JYNX_APPROVAL_CHAT_ID) {
       this.logger.warn('proposal posted but JYNX_APPROVAL_CHAT_ID is not configured');
       return;
@@ -63,11 +80,43 @@ export class Reporter {
             .text('✅ Approve', `approve:${approvalId}`)
             .text('❌ Reject', `reject:${approvalId}`);
     try {
-      await this.api.sendMessage(this.config.JYNX_APPROVAL_CHAT_ID, text.slice(0, 3500), {
-        reply_markup: keyboard,
-      });
+      const sent = await this.api.sendMessage(
+        this.config.JYNX_APPROVAL_CHAT_ID,
+        text.slice(0, 3500),
+        {
+          reply_markup: keyboard,
+        },
+      );
+      return {
+        chatId: sent.chat.id,
+        messageId: sent.message_id,
+        link: telegramMessageLink(sent.chat.id, sent.message_id),
+      };
     } catch (sendError) {
       this.logger.error({ err: sendError }, 'failed to post proposal');
+    }
+  }
+
+  public async editProposal(
+    chatId: number,
+    messageId: number,
+    text: string,
+    approvalId?: number,
+  ): Promise<boolean> {
+    const keyboard =
+      approvalId === undefined
+        ? undefined
+        : new InlineKeyboard()
+            .text('✅ Approve', `approve:${approvalId}`)
+            .text('❌ Reject', `reject:${approvalId}`);
+    try {
+      await this.api.editMessageText(chatId, messageId, text.slice(0, 3500), {
+        reply_markup: keyboard ?? new InlineKeyboard(),
+      });
+      return true;
+    } catch (sendError) {
+      this.logger.error({ err: sendError }, 'failed to edit proposal');
+      return false;
     }
   }
 

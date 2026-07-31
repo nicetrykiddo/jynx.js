@@ -20,6 +20,11 @@ interface FakeApproval {
   summary: string;
   payload: unknown;
   status: string;
+  approvalChatId?: number | null;
+  approvalMessageId?: number | null;
+  sourceChatId?: number | null;
+  sourceMessageId?: number | null;
+  requestedByName?: string | null;
 }
 
 function makeDeps(overrides: Partial<{ approval: FakeApproval }> = {}) {
@@ -27,8 +32,6 @@ function makeDeps(overrides: Partial<{ approval: FakeApproval }> = {}) {
   if (overrides.approval) {
     approvals.set(overrides.approval.id, overrides.approval);
   }
-  let nextId = 2;
-
   const repository = {
     getApproval: vi.fn(async (id: number) => approvals.get(id)),
     decideApproval: vi.fn(async (id: number, status: string, decidedBy: number) => {
@@ -37,22 +40,20 @@ function makeDeps(overrides: Partial<{ approval: FakeApproval }> = {}) {
       row.status = status;
       return { ...row, decidedBy };
     }),
-    createApproval: vi.fn(async (input: Record<string, unknown>) => {
-      const row: FakeApproval = {
-        id: nextId++,
-        requestedBy: (input.requestedBy as number) ?? null,
-        kind: input.kind as string,
-        stage: (input.stage as string) ?? 'idea',
-        summary: input.summary as string,
-        payload: input.payload,
-        status: 'pending',
-      };
-      approvals.set(row.id, row);
+    updateApprovalStagePlan: vi.fn(async (id: number, summary: string, payload: unknown) => {
+      const row = approvals.get(id);
+      if (!row || row.status !== 'pending' || row.stage !== 'idea') return undefined;
+      row.stage = 'plan';
+      row.summary = summary;
+      row.payload = payload;
       return row;
     }),
   };
 
-  const reporter = { postProposal: vi.fn(async () => {}) };
+  const reporter = {
+    editProposal: vi.fn(async () => true),
+    postProposal: vi.fn(async () => undefined),
+  };
   const runner = {
     plan: vi.fn(async () => ({
       branch: 'jynx/test',
@@ -92,7 +93,7 @@ describe('ApprovalFlow', () => {
     expect(deps.runner.plan).not.toHaveBeenCalled();
   });
 
-  it('idea approval drafts a plan and creates plan approval', async () => {
+  it('turns an idea into a plan on the same approval and message', async () => {
     const deps = makeDeps({
       approval: {
         id: 1,
@@ -102,6 +103,8 @@ describe('ApprovalFlow', () => {
         summary: 'idea',
         payload: { idea: 'do a thing' },
         status: 'pending',
+        approvalChatId: -100123,
+        approvalMessageId: 55,
       },
     });
     const flow = new ApprovalFlow({
@@ -114,7 +117,14 @@ describe('ApprovalFlow', () => {
     });
     const result = await flow.approve(100, 1);
     expect(deps.runner.plan).toHaveBeenCalledOnce();
-    expect(result.reply).toContain('drafted plan');
-    expect(deps.reporter.postProposal).toHaveBeenCalledOnce();
+    expect(result.reply).toContain('approval #1 is now a plan');
+    expect(deps.approvals.size).toBe(1);
+    expect(deps.approvals.get(1)?.stage).toBe('plan');
+    expect(deps.reporter.editProposal).toHaveBeenCalledWith(
+      -100123,
+      55,
+      expect.stringContaining('Approval #1 — plan ready'),
+      1,
+    );
   });
 });
