@@ -1,4 +1,3 @@
-import { run } from '@grammyjs/runner';
 import { loadConfig, ConfigurationError } from './config.js';
 import { createLogger } from './core/logger.js';
 import { createStorage, pingDatabase } from './storage/db.js';
@@ -12,6 +11,7 @@ import { IntrospectionService } from './agent/introspection.js';
 import { IntentDetector } from './agent/intent.js';
 import { AgentRunner } from './agent/runner.js';
 import { createBot } from './telegram/bot.js';
+import { startWebhook } from './telegram/webhook.js';
 
 async function main(): Promise<void> {
   let config;
@@ -80,13 +80,11 @@ async function main(): Promise<void> {
   await bot.init();
   logger.info({ username: bot.botInfo.username }, 'bot initialized');
 
-  const runner = run(bot);
+  const webhook = await startWebhook(bot, config, logger);
 
   const stop = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'shutting down');
-    if (runner.isRunning()) {
-      await runner.stop();
-    }
+    await webhook.close();
     await storage.close();
     process.exit(0);
   };

@@ -124,6 +124,31 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 
   TELEGRAM_BOT_TOKEN: z.string().trim().min(1, 'TELEGRAM_BOT_TOKEN is required'),
+  TELEGRAM_WEBHOOK_URL: z
+    .string()
+    .trim()
+    .url('TELEGRAM_WEBHOOK_URL must be a valid URL')
+    .refine((value) => value.startsWith('https://'), 'TELEGRAM_WEBHOOK_URL must use HTTPS')
+    .refine((value) => {
+      const url = new URL(value);
+      return (
+        !url.username &&
+        !url.password &&
+        !url.search &&
+        !url.hash &&
+        /\/[A-Za-z0-9_-]{32,}$/.test(url.pathname)
+      );
+    }, 'must end in a secret path of at least 32 characters without credentials, query, or fragment'),
+  TELEGRAM_WEBHOOK_SECRET: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9_-]{32,256}$/, 'must be 32-256 allowed characters'),
+  TELEGRAM_WEBHOOK_CERTIFICATE_PATH: z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z.string().trim().min(1).optional(),
+  ),
+  TELEGRAM_WEBHOOK_HOST: z.enum(['127.0.0.1', '::1']).default('127.0.0.1'),
+  TELEGRAM_WEBHOOK_PORT: integerFromEnvironment(8081, 1, 65_535),
   JYNX_OWNER_ID: telegramIdSchema,
   JYNX_ADMIN_IDS: adminIdsSchema,
   JYNX_APPROVAL_CHAT_ID: optionalTelegramIdSchema,
