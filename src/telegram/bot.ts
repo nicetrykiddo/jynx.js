@@ -64,6 +64,12 @@ export function parseNaturalEdit(text: string): string | null {
   return match?.[1]?.trim() || null;
 }
 
+export function serializeTelegramContext(value: unknown): string {
+  const blocked = new Set(['invite_link', 'file_id', 'file_unique_id']);
+  const raw = JSON.stringify(value, (key, item) => (blocked.has(key) ? undefined : item)) ?? 'null';
+  return raw.length > 12_000 ? `${raw.slice(0, 12_000)}…` : raw;
+}
+
 export function createBot(deps: BotDependencies): Bot {
   const { config, logger, auth, conversation, repository, intent, agentRunner } = deps;
   const bot = new Bot(config.TELEGRAM_BOT_TOKEN);
@@ -104,7 +110,7 @@ export function createBot(deps: BotDependencies): Bot {
       ]);
     const valueOf = <T>(result: PromiseSettledResult<T>): T | undefined =>
       result.status === 'fulfilled' ? result.value : undefined;
-    const raw = JSON.stringify({
+    const value = serializeTelegramContext({
       user: ctx.from,
       userProfile: valueOf(userProfile),
       userGifts: valueOf(userGifts),
@@ -114,7 +120,6 @@ export function createBot(deps: BotDependencies): Bot {
       membership: valueOf(membership),
       memberCount: valueOf(memberCount),
     });
-    const value = raw.length > 12_000 ? `${raw.slice(0, 12_000)}…` : raw;
     if (telegramContextCache.size >= 1000) {
       const oldest = telegramContextCache.keys().next().value;
       if (oldest) telegramContextCache.delete(oldest);
