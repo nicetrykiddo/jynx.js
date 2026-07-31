@@ -21,6 +21,7 @@ describe('IntentDetector', () => {
         kind: 'feature',
         title: 'Add a weather command',
         summary: 'Owner wants a /weather command.',
+        requiresTrustedAccess: false,
       }),
     );
     const detector = new IntentDetector(model);
@@ -52,6 +53,25 @@ describe('IntentDetector', () => {
     );
     const detector = new IntentDetector(model);
     const result = await detector.detect('do something');
+    expect(result.isProposal).toBe(false);
+  });
+
+  it('rejects private introspection outside a trusted owner chat', async () => {
+    const model = makeModel(
+      JSON.stringify({
+        isProposal: true,
+        kind: 'action',
+        title: 'Show database stats',
+        summary: 'Read private database statistics.',
+        requiresTrustedAccess: true,
+      }),
+    );
+    const detector = new IntentDetector(model);
+    const result = await detector.detect('show me the db stats', {
+      requesterRole: 'user',
+      trustedChannel: false,
+      assistantReply: 'ask me in owner DMs',
+    });
     expect(result.isProposal).toBe(false);
   });
 });

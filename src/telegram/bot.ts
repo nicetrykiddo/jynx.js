@@ -253,6 +253,11 @@ export function createBot(deps: BotDependencies): Bot {
     const isPrivate = type === 'private';
     const isGroup = type === 'group' || type === 'supergroup';
     const identity = auth.identify(ctx.from.id);
+    const isTrustedChat =
+      identity.isOwner &&
+      (isPrivate ||
+        ctx.chat.id === config.JYNX_APPROVAL_CHAT_ID ||
+        ctx.chat.id === config.JYNX_ERROR_CHAT_ID);
     const name = displayName(ctx);
 
     if (identity.isOwner && ctx.message.reply_to_message?.from?.id === ctx.me.id) {
@@ -363,11 +368,6 @@ export function createBot(deps: BotDependencies): Bot {
 
     try {
       await ctx.replyWithChatAction('typing');
-      const isTrustedChat =
-        identity.isOwner &&
-        (isPrivate ||
-          ctx.chat.id === config.JYNX_APPROVAL_CHAT_ID ||
-          ctx.chat.id === config.JYNX_ERROR_CHAT_ID);
       const result = await conversation.respond({
         identity,
         chatId: ctx.chat.id,
@@ -399,6 +399,9 @@ export function createBot(deps: BotDependencies): Bot {
           chatId: ctx.chat.id,
           messageId: ctx.message.message_id,
           text,
+          requesterRole: identity.role,
+          trustedChannel: isTrustedChat,
+          assistantReply: reply,
         });
         if (proposal?.link) {
           const footer = `Approval #${proposal.approvalId}: ${proposal.link}`;

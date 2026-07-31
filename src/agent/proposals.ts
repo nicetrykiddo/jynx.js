@@ -4,6 +4,7 @@ import type { Repository } from '../storage/repository.js';
 import type { IntentDetector } from './intent.js';
 import type { AgentRunner } from './runner.js';
 import { telegramMessageLink } from '../core/reporter.js';
+import type { Role } from '../core/auth.js';
 
 export interface ProposalServiceDeps {
   repository: Repository;
@@ -22,6 +23,9 @@ export class ProposalService {
     chatId: number;
     messageId: number;
     text: string;
+    requesterRole: Role;
+    trustedChannel: boolean;
+    assistantReply: string;
   }): Promise<{ approvalId: number; link: string | null } | null> {
     const history = await this.deps.repository.getRecentMessages(input.chatId, 12);
     const recentContext = history
@@ -33,10 +37,21 @@ export class ProposalService {
         return `${name}: ${message.content}`;
       })
       .join('\n');
-    const detected = await this.deps.intent.detect(input.text, recentContext);
+    const detected = await this.deps.intent.detect(input.text, {
+      recentContext,
+      requesterRole: input.requesterRole,
+      trustedChannel: input.trustedChannel,
+      assistantReply: input.assistantReply,
+    });
     if (!detected.isProposal) {
       return null;
     }
+    const privateInspection =
+      detected.kind === 'action' &&
+      /\b(?:db|database|database stats?|database contents?|codebase|source code|private files?|secrets?|internal instructions?)\b/i.test(
+        `${input.text}\n${detected.summary}`,
+      );
+    if (!input.trustedChannel && (detected.requiresTrustedAccess || privateInspection)) return null;
 
     const approval = await this.deps.repository.createApproval({
       requestedBy: input.userId,
