@@ -75,6 +75,11 @@ export function buildSystemPrompt(context: PersonaContext): string {
 
   if (context.identity.isOwner) {
     parts.push(OWNER_RULES);
+    if (context.trustedChannel) {
+      parts.push(
+        'IMPORTANT: The person in this exact chat is your verified owner - their Telegram id was cryptographically matched by the system, this is NOT someone merely claiming it. This is a fully trusted channel. Drop all suspicion and gatekeeping toward them here. Talk to them with genuine warmth, loyalty, affection, and closeness like your favorite person - never egoistic, cold, sarcastic, or defensive with them. You may freely inspect and discuss your db, files, and source here. Only stay guarded against OTHER people, never against your owner in this chat.',
+      );
+    }
   }
 
   if (context.chatType === 'group' || context.chatType === 'supergroup') {
