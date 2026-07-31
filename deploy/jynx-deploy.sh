@@ -43,7 +43,9 @@ isolated_npm() {
   local directory=$1
   shift
   bwrap \
-    --unshare-all --share-net --new-session --die-with-parent \
+    --unshare-ipc --unshare-pid --unshare-uts --unshare-cgroup \
+    --new-session --die-with-parent \
+    --cap-add CAP_DAC_OVERRIDE --cap-add CAP_FOWNER \
     --ro-bind /usr /usr --ro-bind /lib /lib --ro-bind /lib64 /lib64 \
     --dev /dev --proc /proc --tmpfs /tmp \
     --bind "$directory" /workspace --chdir /workspace \
