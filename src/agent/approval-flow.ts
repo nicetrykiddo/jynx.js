@@ -285,6 +285,7 @@ export class ApprovalFlow {
       decided,
       `❌ Approval #${approvalId} rejected\n${decided.summary}\n\n${approvalContext(decided).join('\n')}`,
     );
+    await this.notifySource(decided, '❌ Your request was rejected.');
     return { reply: `approval #${approvalId} rejected.` };
   }
 
@@ -309,15 +310,22 @@ export class ApprovalFlow {
   }
 
   private async notifySource(approval: Approval, status: string): Promise<void> {
+    approval = (await this.deps.repository.getApproval(approval.id)) ?? approval;
     if (!approval.sourceChatId || !approval.sourceMessageId) return;
     const link =
       approval.approvalChatId && approval.approvalMessageId
         ? telegramMessageLink(approval.approvalChatId, approval.approvalMessageId)
         : null;
-    await this.deps.reporter.notifySource(
-      approval.sourceChatId,
-      approval.sourceMessageId,
-      `Approval #${approval.id}: ${status}${link ? `\n${link}` : ''}`,
-    );
+    const update = `Approval #${approval.id}: ${status}${link ? `\n${link}` : ''}`;
+    if (approval.sourceReplyMessageId && approval.sourceReplyText) {
+      const edited = await this.deps.reporter.editSource(
+        approval.sourceChatId,
+        approval.sourceReplyMessageId,
+        approval.sourceReplyText,
+        update,
+      );
+      if (edited) return;
+    }
+    await this.deps.reporter.notifySource(approval.sourceChatId, approval.sourceMessageId, update);
   }
 }

@@ -99,6 +99,8 @@ export const approvals = pgTable(
     approvalMessageId: bigint('approval_message_id', { mode: 'number' }),
     sourceChatId: bigint('source_chat_id', { mode: 'number' }),
     sourceMessageId: bigint('source_message_id', { mode: 'number' }),
+    sourceReplyMessageId: bigint('source_reply_message_id', { mode: 'number' }),
+    sourceReplyText: text('source_reply_text'),
     requestedByName: text('requested_by_name'),
     decidedBy: bigint('decided_by', { mode: 'number' }),
     decidedAt: timestamp('decided_at', { withTimezone: true }),

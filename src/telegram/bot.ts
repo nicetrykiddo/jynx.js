@@ -536,8 +536,9 @@ export function createBot(deps: BotDependencies): Bot {
       }
 
       let reply = result.reply;
+      let proposalRef: { approvalId: number; link: string | null } | null = null;
       try {
-        const proposal = await proposals.considerMessage({
+        proposalRef = await proposals.considerMessage({
           userId: ctx.from.id,
           requestedByName: requesterLabel(ctx),
           chatId: ctx.chat.id,
@@ -547,8 +548,8 @@ export function createBot(deps: BotDependencies): Bot {
           trustedChannel: isTrustedChat,
           assistantReply: reply,
         });
-        if (proposal?.link) {
-          const footer = `Approval #${proposal.approvalId}: ${proposal.link}`;
+        if (proposalRef?.link) {
+          const footer = `Approval #${proposalRef.approvalId}: ${proposalRef.link}`;
           reply = `${reply.slice(0, 4095 - footer.length)}\n${footer}`;
         }
       } catch (error) {
@@ -575,6 +576,14 @@ export function createBot(deps: BotDependencies): Bot {
       }
 
       lastReplyAt.set(ctx.chat.id, Date.now());
+
+      if (proposalRef) {
+        try {
+          await repository.setApprovalSourceReply(proposalRef.approvalId, sent.message_id, reply);
+        } catch (error) {
+          await reporter.reportError('persist.approval.source-reply', error);
+        }
+      }
 
       await repository.addMessage({
         chatId: ctx.chat.id,

@@ -24,6 +24,8 @@ interface FakeApproval {
   approvalMessageId?: number | null;
   sourceChatId?: number | null;
   sourceMessageId?: number | null;
+  sourceReplyMessageId?: number | null;
+  sourceReplyText?: string | null;
   requestedByName?: string | null;
 }
 
@@ -54,6 +56,7 @@ function makeDeps(overrides: Partial<{ approval: FakeApproval }> = {}) {
     editProposal: vi.fn(async () => true),
     postProposal: vi.fn(async () => undefined),
     notifySource: vi.fn(async () => true),
+    editSource: vi.fn(async () => true),
   };
   const runner = {
     plan: vi.fn(async () => ({
@@ -188,6 +191,7 @@ describe('ApprovalFlow', () => {
 
     const result = await flow.approve(100, 2);
     await vi.waitFor(() => expect(deps.runner.executeAction).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(deps.reporter.notifySource).toHaveBeenCalledOnce());
     expect(result.reply).toContain('update this message with the result');
     expect(deps.runner.plan).not.toHaveBeenCalled();
     expect(deps.runner.execute).not.toHaveBeenCalled();
@@ -227,6 +231,8 @@ describe('ApprovalFlow', () => {
         approvalMessageId: 57,
         sourceChatId: -100999,
         sourceMessageId: 23,
+        sourceReplyMessageId: 24,
+        sourceReplyText: 'i understand. Approval #3: https://t.me/c/123/57',
       },
     });
     const flow = new ApprovalFlow({
@@ -239,11 +245,13 @@ describe('ApprovalFlow', () => {
     });
 
     await flow.approve(100, 3);
-    await vi.waitFor(() => expect(deps.reporter.notifySource).toHaveBeenCalledOnce());
-    expect(deps.reporter.notifySource).toHaveBeenCalledWith(
+    await vi.waitFor(() => expect(deps.reporter.editSource).toHaveBeenCalledOnce());
+    expect(deps.reporter.editSource).toHaveBeenCalledWith(
       -100999,
-      23,
+      24,
+      'i understand. Approval #3: https://t.me/c/123/57',
       expect.stringContaining('automated checks passed'),
     );
+    expect(deps.reporter.notifySource).not.toHaveBeenCalled();
   });
 });

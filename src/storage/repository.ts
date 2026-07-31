@@ -291,6 +291,13 @@ export class Repository {
       .where(eq(approvals.id, id));
   }
 
+  public async setApprovalSourceReply(id: number, messageId: number, text: string): Promise<void> {
+    await this.db
+      .update(approvals)
+      .set({ sourceReplyMessageId: messageId, sourceReplyText: text })
+      .where(eq(approvals.id, id));
+  }
+
   public async updateApprovalStagePlan(
     id: number,
     summary: string,

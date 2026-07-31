@@ -150,6 +150,26 @@ export class Reporter {
     }
   }
 
+  public async editSource(
+    chatId: number,
+    messageId: number,
+    original: string,
+    status: string,
+  ): Promise<boolean> {
+    try {
+      await this.api.editMessageText(
+        chatId,
+        messageId,
+        `${telegramHtml(original, 3000)}\n\n${telegramHtml(status, 900)}`,
+        { parse_mode: 'HTML' },
+      );
+      return true;
+    } catch (sendError) {
+      this.logger.error({ err: sendError }, 'failed to edit source reply');
+      return false;
+    }
+  }
+
   public async info(text: string): Promise<void> {
     if (!this.config.JYNX_ERROR_CHAT_ID) {
       return;
