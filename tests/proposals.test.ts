@@ -175,4 +175,52 @@ describe('ProposalService', () => {
       expect.stringContaining('Agent Kim Reactivated'),
     );
   });
+
+  it('runs trusted owner read-only capabilities immediately', async () => {
+    const repository = {
+      getRecentMessages: vi.fn(async () => []),
+      createApproval: vi.fn(),
+      countRecentApprovalsForUser: vi.fn(),
+    };
+    const runner = {
+      executeAction: vi.fn(async () => ({ status: 'done', output: 'the code is healthy' })),
+    };
+    const service = new ProposalService({
+      repository: repository as never,
+      reporter: { postProposal: vi.fn() } as never,
+      intent: {
+        detect: vi.fn(async () => ({
+          isProposal: true,
+          kind: 'action',
+          title: 'Inspect the code',
+          summary: 'Inspect the current codebase and report findings.',
+          capabilities: ['repo.read'],
+        })),
+      } as never,
+      runner: runner as never,
+      logger: {} as never,
+      config: { MAX_PROPOSALS_PER_USER_PER_HOUR: 10 },
+    });
+
+    const result = await service.considerMessage({
+      userId: 42,
+      requestedByName: 'Owner',
+      chatId: 42,
+      messageId: 10,
+      text: 'inspect your codebase',
+      requesterRole: 'owner',
+      trustedChannel: true,
+      assistantReply: 'checking it',
+      alreadyWebSearched: false,
+    });
+
+    expect(result?.reply).toBe('the code is healthy');
+    expect(runner.executeAction).toHaveBeenCalledWith(
+      'Inspect the current codebase and report findings.',
+      ['repo.read'],
+      42,
+      expect.any(String),
+    );
+    expect(repository.createApproval).not.toHaveBeenCalled();
+  });
 });

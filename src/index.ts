@@ -12,6 +12,9 @@ import { IntentDetector } from './agent/intent.js';
 import { AgentRunner } from './agent/runner.js';
 import { createBot } from './telegram/bot.js';
 import { startWebhook } from './telegram/webhook.js';
+import { ComputeService } from './agent/compute.js';
+import { writeFile } from 'node:fs/promises';
+import path from 'node:path';
 
 async function main(): Promise<void> {
   let config;
@@ -45,7 +48,15 @@ async function main(): Promise<void> {
   const model = createModelProvider(config, logger);
   const webSearch = new WebSearchService(config, logger);
   const introspection = new IntrospectionService({ config, repository, logger });
-  const conversation = new ConversationService(config, repository, model, webSearch, introspection);
+  const compute = new ComputeService(model, logger);
+  const conversation = new ConversationService(
+    config,
+    repository,
+    model,
+    webSearch,
+    introspection,
+    compute,
+  );
 
   const executor = new CommandExecutor(
     {
@@ -65,6 +76,10 @@ async function main(): Promise<void> {
     logger,
     webSearch,
     introspection,
+    undefined,
+    async () => {
+      await writeFile(path.resolve('.deploy-request'), `${Date.now()}\n`, { mode: 0o600 });
+    },
   );
 
   const bot = createBot({

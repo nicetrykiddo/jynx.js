@@ -1,0 +1,11 @@
+[Unit]
+Description=Deploy verified Jynx main branch
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/sleep 8
+ExecStart=/usr/local/sbin/jynx-deploy
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

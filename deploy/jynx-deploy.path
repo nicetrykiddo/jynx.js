@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for verified Jynx deployment requests
+
+[Path]
+PathExists=/opt/jynx/.deploy-request
+Unit=jynx-deploy.service
+
+[Install]
+WantedBy=multi-user.target

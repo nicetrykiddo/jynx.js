@@ -168,6 +168,47 @@ describe('conversation safety and style', () => {
     );
   });
 
+  it('lets the verified owner use model-routed computation anywhere without an approval', async () => {
+    let captured: CompletionRequest | undefined;
+    const compute = { runIfUseful: vi.fn(async () => '65805737490085841') };
+    const service = new ConversationService(
+      {
+        MAX_HISTORY_MESSAGES: 10,
+        MAX_GROUP_CONTEXT_MESSAGES: 10,
+        MAX_RESPONSE_CHARS: 4096,
+        JYNX_TIMEZONE: 'UTC',
+      },
+      {
+        getRecentMessages: vi.fn(async () => []),
+        getMemories: vi.fn(async () => []),
+      } as never,
+      {
+        complete: vi.fn(async (request: CompletionRequest) => {
+          captured = request;
+          return { content: '65805737490085841', toolCalls: [], finishReason: 'stop' };
+        }),
+      } as never,
+      undefined,
+      undefined,
+      compute as never,
+    );
+
+    await service.respond({
+      identity: { userId: 1, role: 'owner', isOwner: true, isAdmin: true },
+      chatId: 1,
+      chatType: 'private',
+      displayName: 'Melo',
+      userText: 'give me the last 17 digits',
+      trustedIntrospection: false,
+    });
+
+    expect(compute.runIfUseful).toHaveBeenCalledOnce();
+    expect(captured?.temperature).toBe(0.2);
+    expect(captured?.messages).toContainEqual(
+      expect.objectContaining({ role: 'tool', name: 'sandboxed_compute' }),
+    );
+  });
+
   it('never trusts a non-owner just because they are in a trusted group', () => {
     const prompt = buildSystemPrompt({
       identity: { userId: 2, role: 'user', isOwner: false, isAdmin: false },

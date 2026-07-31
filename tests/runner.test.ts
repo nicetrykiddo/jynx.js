@@ -16,6 +16,8 @@ describe('AgentRunner', () => {
     MAX_AGENT_STEPS: 10,
     MAX_ACTIVE_RUNS_PER_USER: 2,
     MAX_CONCURRENT_AGENT_RUNS: 1,
+    ENABLE_SELF_MODIFICATION: true,
+    ENABLE_AUTOMATIC_RESTART: false,
   };
 
   it('refuses a run above the per-user active limit', async () => {
@@ -67,13 +69,16 @@ describe('AgentRunner', () => {
     await expect(runner.plan('thing')).resolves.toMatchObject({ branch: 'jynx/bad-branch' });
   });
 
-  it('blocks patch paths outside the repository and secret files', () => {
+  it('blocks paths outside the repository and secrets without blocking project configuration', () => {
     expect(() =>
       validatePatch('--- a/src/a.ts\n+++ b/../../etc/passwd\n@@ -1 +1 @@\n-a\n+b'),
     ).toThrow('unsafe patch path');
     expect(() => validatePatch('--- a/.env\n+++ b/.env\n@@ -1 +1 @@\n-a\n+b')).toThrow(
       'blocked patch path',
     );
+    expect(() =>
+      validatePatch('--- a/package.json\n+++ b/package.json\n@@ -1 +1 @@\n-{}\n+{"type":"module"}'),
+    ).not.toThrow();
   });
 
   it('returns a database inspection result without touching Git', async () => {
@@ -129,6 +134,13 @@ describe('AgentRunner', () => {
           ? { command, args, exitCode: 0, stdout: '', stderr: '' }
           : real.runChecked(command, args),
       ),
+      runIsolatedChecked: vi.fn(async (command: string, args: string[]) => ({
+        command,
+        args,
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      })),
       scoped: vi.fn(() => executor),
       cleanup: vi.fn(),
     };
@@ -154,9 +166,16 @@ describe('AgentRunner', () => {
       commitAll: vi.fn(async () => {}),
       push: vi.fn(async () => {}),
       openPullRequest: vi.fn(async () => ({ url: 'https://example.test/pr/1', number: 1 })),
+      mergePullRequest: vi.fn(async () => ({ sha: 'abc123' })),
     };
+    const requestDeployment = vi.fn(async () => {});
     const runner = new AgentRunner(
-      { ...config, GITHUB_TOKEN: 'token', GITHUB_REPO: 'o/r' },
+      {
+        ...config,
+        GITHUB_TOKEN: 'token',
+        GITHUB_REPO: 'o/r',
+        ENABLE_AUTOMATIC_RESTART: true,
+      },
       repository as never,
       model as never,
       executor as never,
@@ -164,6 +183,7 @@ describe('AgentRunner', () => {
       undefined,
       undefined,
       () => github as never,
+      requestDeployment,
     );
 
     const result = await runner.execute(
@@ -173,11 +193,18 @@ describe('AgentRunner', () => {
       42,
     );
 
-    expect(result).toMatchObject({ status: 'done', prUrl: 'https://example.test/pr/1' });
+    expect(result).toMatchObject({
+      status: 'done',
+      prUrl: 'https://example.test/pr/1',
+      deploymentRequested: true,
+    });
     expect(readFileSync(path.join(root, 'src/value.ts'), 'utf8')).toBe('export const value = 2;\n');
     expect(github.openPullRequest).toHaveBeenCalledOnce();
     expect(github.openPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({ body: expect.not.stringContaining('private conversation') }),
     );
+    expect(github.mergePullRequest).toHaveBeenCalledWith(1);
+    expect(requestDeployment).toHaveBeenCalledOnce();
+    expect(executor.runIsolatedChecked).toHaveBeenCalledWith('npm', ['test']);
   });
 });

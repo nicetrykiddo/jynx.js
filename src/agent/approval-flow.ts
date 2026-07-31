@@ -245,13 +245,18 @@ export class ApprovalFlow {
         approval.requestedBy ?? null,
       );
       if (result.status === 'done') {
+        const completion = result.deploymentRequested
+          ? `✅ Approval #${approvalId} built, tested, merged, and queued for deployment`
+          : `✅ Approval #${approvalId} built`;
         await this.editApproval(
           approval,
-          `✅ Approval #${approvalId} built\nPR: ${result.prUrl ?? '(no url)'}\n\n${approvalContext(approval).join('\n')}`,
+          `${completion}\nPR: ${result.prUrl ?? '(no url)'}\n\n${approvalContext(approval).join('\n')}`,
         );
         await this.notifySource(
           approval,
-          '✅ Your request is complete and the automated checks passed. The approval message has the result.',
+          result.deploymentRequested
+            ? '✅ Your request passed every check, was merged, and is deploying.'
+            : '✅ Your request is complete and the automated checks passed. The approval message has the result.',
         );
       } else {
         await this.editApproval(

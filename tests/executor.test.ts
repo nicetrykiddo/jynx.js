@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -66,5 +66,21 @@ describe('CommandExecutor', () => {
     expect(redactCommandArgs(['https://user:secret@example.com/repo.git'])).toEqual([
       'https://[redacted]@example.com/repo.git',
     ]);
+  });
+
+  it('isolates generated validation from the host filesystem and network namespace', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'maple-isolated-'));
+    const secret = path.join(tmpdir(), 'maple-host-secret');
+    writeFileSync(secret, 'hidden');
+    writeFileSync(
+      path.join(root, 'probe.js'),
+      `require('node:fs').readFileSync(${JSON.stringify(secret)}, 'utf8')`,
+    );
+    const executor = new CommandExecutor(
+      { allowedCommands: ['node'], timeoutMs: 5000, workdir: root },
+      logger,
+    );
+    const result = await executor.runIsolated('node', ['probe.js']);
+    expect(result.exitCode).not.toBe(0);
   });
 });

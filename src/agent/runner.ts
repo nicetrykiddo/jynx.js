@@ -22,6 +22,7 @@ export interface RunnerResult {
   prUrl?: string;
   output?: string;
   error?: string;
+  deploymentRequested?: boolean;
 }
 
 const PLANNER_SYSTEM_PROMPT = [
@@ -75,16 +76,7 @@ function assertSafeRepoPath(raw: string): string {
     throw new Error(`unsafe patch path: ${raw}`);
   }
   const segments = normalized.split('/');
-  const controlFiles = new Set([
-    'package.json',
-    'package-lock.json',
-    'eslint.config.js',
-    'drizzle.config.ts',
-    'tsconfig.json',
-    'tsconfig.build.json',
-  ]);
   if (
-    controlFiles.has(normalized) ||
     segments.some(
       (segment) =>
         ['.git', '.github', '.env', 'node_modules', 'dist'].includes(segment) ||
@@ -121,6 +113,8 @@ export class AgentRunner {
       | 'MAX_AGENT_STEPS'
       | 'MAX_ACTIVE_RUNS_PER_USER'
       | 'MAX_CONCURRENT_AGENT_RUNS'
+      | 'ENABLE_SELF_MODIFICATION'
+      | 'ENABLE_AUTOMATIC_RESTART'
     >,
     private readonly repository: Repository,
     private readonly model: ModelProvider,
@@ -130,6 +124,7 @@ export class AgentRunner {
     private readonly introspection?: IntrospectionService,
     private readonly githubFactory: (executor: CommandExecutor) => GitHubService = (scoped) =>
       new GitHubService(this.config, scoped, this.logger),
+    private readonly requestDeployment?: () => Promise<void>,
   ) {}
 
   private activeCodeRuns = 0;
@@ -394,12 +389,16 @@ export class AgentRunner {
       const github = this.githubFactory(executor);
       try {
         await this.repository.updateTask(task.id, { status: 'running' });
+        if (!this.config.ENABLE_SELF_MODIFICATION) {
+          throw new Error('self-modification is disabled');
+        }
         if (!github.isConfigured) throw new Error('GitHub is not configured');
         await github.createBranch(plan.branch);
-        await executor.runChecked('npm', ['ci']);
         await this.applyGeneratedPatch(idea, plan, executor);
-        await executor.runChecked('npm', ['run', 'build']);
-        await executor.runChecked('npm', ['run', 'lint']);
+        await executor.runChecked('npm', ['install', '--ignore-scripts']);
+        await executor.runIsolatedChecked('npm', ['test']);
+        await executor.runIsolatedChecked('npm', ['run', 'build']);
+        await executor.runIsolatedChecked('npm', ['run', 'lint']);
         await github.commitAll(`jynx: ${plan.summary.slice(0, 100)}`);
         await github.push(plan.branch);
         const pr = await github.openPullRequest({
@@ -412,14 +411,21 @@ export class AgentRunner {
             'Steps:',
             ...plan.steps.map((step) => `- ${step}`),
             '',
-            'Validation: patch safety, git diff check, build, and lint passed. Executable tests are deferred to isolated review/CI.',
+            'Validation: patch safety, git diff check, tests, build, and lint passed.',
           ].join('\n'),
         });
+        let deploymentRequested = false;
+        if (this.config.ENABLE_AUTOMATIC_RESTART) {
+          if (!this.requestDeployment) throw new Error('deployment controller is unavailable');
+          await github.mergePullRequest(pr.number);
+          await this.requestDeployment();
+          deploymentRequested = true;
+        }
         await this.repository.updateTask(task.id, {
           status: 'done',
-          state: { branch: plan.branch, prUrl: pr.url },
+          state: { branch: plan.branch, prUrl: pr.url, deploymentRequested },
         });
-        return { taskId: task.id, status: 'done', prUrl: pr.url };
+        return { taskId: task.id, status: 'done', prUrl: pr.url, deploymentRequested };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.logger.error({ err: message, taskId: task.id }, 'agent run failed');

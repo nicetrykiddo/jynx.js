@@ -6,6 +6,7 @@ import type { Repository } from '../storage/repository.js';
 import type { Message } from '../storage/schema.js';
 import type { WebSearchService } from '../agent/websearch.js';
 import type { IntrospectionService } from '../agent/introspection.js';
+import type { ComputeService } from '../agent/compute.js';
 
 export interface ConversationInput {
   identity: Identity;
@@ -50,6 +51,7 @@ export class ConversationService {
     private readonly model: ModelProvider,
     private readonly webSearch?: WebSearchService,
     private readonly introspection?: IntrospectionService,
+    private readonly compute?: ComputeService,
   ) {}
 
   private referencesPast(text: string): boolean {
@@ -286,6 +288,7 @@ export class ConversationService {
       ...historyToChatMessages(history, isGroup),
     ];
     let usedWebSearch = false;
+    let usedComputation = false;
 
     const spokenText = isGroup ? `${input.displayName}: ${input.userText}` : input.userText;
     const userContent = input.telegramContext
@@ -364,6 +367,32 @@ export class ConversationService {
       }
     }
 
+    if (input.identity.isOwner && this.compute) {
+      try {
+        const computeContext = history
+          .slice(-8)
+          .map((message) => `${message.role}: ${message.content}`)
+          .join('\n');
+        const output = await this.compute.runIfUseful(input.userText, computeContext);
+        if (output) {
+          usedComputation = true;
+          messages.push({
+            role: 'tool',
+            name: 'sandboxed_compute',
+            content: `Exact computation output (use this as evidence and give the answer now):\n${output}`,
+          });
+        }
+      } catch {
+        usedComputation = true;
+        messages.push({
+          role: 'tool',
+          name: 'sandboxed_compute_error',
+          content:
+            'The bounded computation failed. State that once without inventing an answer, promising background work, or proposing a tool that already exists.',
+        });
+      }
+    }
+
     if (trustedIntrospection && this.introspection?.isEnabled) {
       try {
         const request = this.detectIntrospection(input.userText);
@@ -388,7 +417,10 @@ export class ConversationService {
 
     messages.push({ role: 'user', content: userContent });
 
-    const result = await this.model.complete({ messages, temperature: usedWebSearch ? 0.2 : 0.85 });
+    const result = await this.model.complete({
+      messages,
+      temperature: usedWebSearch || usedComputation ? 0.2 : 0.85,
+    });
     let reply = normalizeReply(result.content);
 
     const maxChars = Math.min(this.config.MAX_RESPONSE_CHARS, 4096);

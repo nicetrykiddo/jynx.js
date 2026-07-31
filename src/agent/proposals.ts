@@ -57,15 +57,20 @@ export class ProposalService {
       return null;
     }
     if (requiresTrustedChannel(detected.capabilities) && !input.trustedChannel) return null;
-    if (
+    const isWebOnly =
       detected.kind === 'action' &&
       detected.capabilities.length === 1 &&
-      detected.capabilities[0] === 'web.read'
-    ) {
-      if (input.alreadyWebSearched) return null;
+      detected.capabilities[0] === 'web.read';
+    const isOwnerReadOnly =
+      detected.kind === 'action' &&
+      input.requesterRole === 'owner' &&
+      input.trustedChannel &&
+      detected.capabilities.length > 0;
+    if (isWebOnly || isOwnerReadOnly) {
+      if (isWebOnly && input.alreadyWebSearched) return null;
       const result = await this.deps.runner.executeAction(
         detected.summary,
-        ['web.read'],
+        detected.capabilities,
         input.userId,
         [detected.title, detected.summary, recentContext.slice(-800), input.text].join(' '),
       );
@@ -75,7 +80,7 @@ export class ProposalService {
         reply:
           result.status === 'done'
             ? result.output
-            : "the web search failed just now, so i don't have verified results yet.",
+            : "that run failed just now, so i don't have a verified result yet.",
       };
     }
     if (
