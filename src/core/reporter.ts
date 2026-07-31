@@ -17,6 +17,21 @@ export function telegramMessageLink(chatId: number, messageId: number): string |
   return null;
 }
 
+export function telegramHtml(text: string, maxLength = 3500): string {
+  let source = text;
+  for (;;) {
+    const formatted = source
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/^\s*-\s+/gm, '• ')
+      .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
+    if (formatted.length <= maxLength) return formatted;
+    const nextLength = Math.floor((source.length * maxLength) / formatted.length);
+    source = source.slice(0, Math.min(source.length - 1, nextLength));
+  }
+}
+
 export class Reporter {
   private readonly recentErrors = new Map<string, number>();
 
@@ -82,8 +97,9 @@ export class Reporter {
     try {
       const sent = await this.api.sendMessage(
         this.config.JYNX_APPROVAL_CHAT_ID,
-        text.slice(0, 3500),
+        telegramHtml(text),
         {
+          parse_mode: 'HTML',
           reply_markup: keyboard,
         },
       );
@@ -110,7 +126,8 @@ export class Reporter {
             .text('✅ Approve', `approve:${approvalId}`)
             .text('❌ Reject', `reject:${approvalId}`);
     try {
-      await this.api.editMessageText(chatId, messageId, text.slice(0, 3500), {
+      await this.api.editMessageText(chatId, messageId, telegramHtml(text), {
+        parse_mode: 'HTML',
         reply_markup: keyboard ?? new InlineKeyboard(),
       });
       return true;
