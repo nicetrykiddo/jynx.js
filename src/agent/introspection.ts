@@ -83,6 +83,31 @@ export class IntrospectionService {
       .sort();
   }
 
+  public listOwnFilesRecursive(relativeDir = '.'): string[] {
+    if (!this.isEnabled) {
+      throw new Error('introspection is disabled');
+    }
+    const projectRoot = realpathSync(this.root);
+    const root = this.resolveWithin(relativeDir);
+    const files: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (
+          entry.isSymbolicLink() ||
+          ['node_modules', '.git', 'dist'].includes(entry.name) ||
+          (entry.name.startsWith('.env') && entry.name !== '.env.example')
+        ) {
+          continue;
+        }
+        const absolute = this.resolveWithin(path.relative(projectRoot, path.join(dir, entry.name)));
+        if (entry.isDirectory()) walk(absolute);
+        else files.push(path.relative(projectRoot, absolute).replace(/\\/g, '/'));
+      }
+    };
+    walk(root);
+    return files.sort();
+  }
+
   public async dbOverview(): Promise<DbOverview> {
     if (!this.isEnabled) {
       throw new Error('introspection is disabled');

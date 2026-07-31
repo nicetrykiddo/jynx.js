@@ -62,6 +62,11 @@ function makeDeps(overrides: Partial<{ approval: FakeApproval }> = {}) {
       testPlan: ['run tests'],
     })),
     execute: vi.fn(async () => ({ taskId: 1, status: 'done' as const, prUrl: 'http://pr' })),
+    executeAction: vi.fn(async () => ({
+      taskId: 2,
+      status: 'done' as const,
+      output: 'checked it',
+    })),
   };
 
   return { repository, reporter, runner, approvals };
@@ -125,6 +130,42 @@ describe('ApprovalFlow', () => {
       55,
       expect.stringContaining('Approval #1 — plan ready'),
       1,
+    );
+  });
+
+  it('runs a read-only action once without planning or creating a PR', async () => {
+    const deps = makeDeps({
+      approval: {
+        id: 2,
+        requestedBy: 300,
+        kind: 'action',
+        stage: 'idea',
+        summary: 'check the database',
+        payload: { idea: 'check the database counts' },
+        status: 'pending',
+        approvalChatId: -100123,
+        approvalMessageId: 56,
+      },
+    });
+    const flow = new ApprovalFlow({
+      config: { GITHUB_REPO: 'o/r' },
+      auth: makeAuth(),
+      repository: deps.repository as never,
+      reporter: deps.reporter as never,
+      runner: deps.runner as never,
+      logger,
+    });
+
+    const result = await flow.approve(100, 2);
+    await vi.waitFor(() => expect(deps.runner.executeAction).toHaveBeenCalledOnce());
+    expect(result.reply).toContain('update this message with the result');
+    expect(deps.runner.plan).not.toHaveBeenCalled();
+    expect(deps.runner.execute).not.toHaveBeenCalled();
+    expect(deps.reporter.editProposal).toHaveBeenCalledWith(
+      -100123,
+      56,
+      expect.stringContaining('checked it'),
+      undefined,
     );
   });
 });

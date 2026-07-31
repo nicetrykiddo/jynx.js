@@ -64,12 +64,47 @@ export class ApprovalFlow {
     }
 
     if (approval.stage === 'idea') {
-      return this.approveIdea(approvalId);
+      return approval.kind === 'feature'
+        ? this.approveIdea(approvalId)
+        : this.approveAction(userId, approval);
     }
     if (approval.stage === 'plan') {
       return this.approvePlan(userId, approvalId);
     }
     return { reply: `approval #${approvalId} is in an unknown stage.` };
+  }
+
+  private async approveAction(userId: number, approval: Approval): Promise<DecisionResult> {
+    const payload = asPlanPayload(approval.payload);
+    const idea = payload.summary ?? approval.summary;
+    const decided = await this.deps.repository.decideApproval(approval.id, 'approved', userId);
+    if (!decided) return { reply: `approval #${approval.id} was already decided.` };
+    await this.editApproval(
+      decided,
+      `✅ Approval #${approval.id} approved\nRunning this as a read-only action. No branch or PR will be created.\n${approvalContext(decided).join('\n')}`,
+    );
+    void this.runActionInBackground(idea, decided);
+    return {
+      reply: `approval #${approval.id} approved. i'll update this message with the result.`,
+    };
+  }
+
+  private async runActionInBackground(idea: string, approval: Approval): Promise<void> {
+    try {
+      const result = await this.deps.runner.executeAction(idea, approval.requestedBy ?? null);
+      const text =
+        result.status === 'done'
+          ? `✅ Approval #${approval.id} completed\n${(result.output ?? 'No result returned.').slice(0, 2800)}\n${approvalContext(approval).join('\n')}`
+          : `⚠️ Approval #${approval.id} failed\n${(result.error ?? 'unknown').slice(0, 500)}\n${approvalContext(approval).join('\n')}`;
+      await this.editApproval(approval, text);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.deps.logger.error({ err: message, approvalId: approval.id }, 'action run crashed');
+      await this.editApproval(
+        approval,
+        `⚠️ Approval #${approval.id} crashed\n${message.slice(0, 500)}\n${approvalContext(approval).join('\n')}`,
+      );
+    }
   }
 
   private async approveIdea(approvalId: number): Promise<DecisionResult> {

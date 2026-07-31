@@ -56,7 +56,16 @@ async function main(): Promise<void> {
   );
   const github = new GitHubService(config, executor, logger);
   const intent = new IntentDetector(model);
-  const agentRunner = new AgentRunner(config, repository, model, executor, github, logger);
+  const agentRunner = new AgentRunner(
+    config,
+    repository,
+    model,
+    executor,
+    github,
+    logger,
+    webSearch,
+    introspection,
+  );
 
   const bot = createBot({
     config,

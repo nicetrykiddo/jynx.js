@@ -35,8 +35,26 @@ export class GitHubService {
 
   public async createBranch(branch: string): Promise<void> {
     this.assertConfigured();
+    const inside = await this.executor.run('git', ['rev-parse', '--is-inside-work-tree']);
+    if (inside.exitCode !== 0) {
+      await this.executor.runChecked('git', [
+        'clone',
+        `https://github.com/${this.config.GITHUB_REPO as string}.git`,
+        '.',
+      ]);
+    }
+    await this.executor.runChecked('git', ['config', 'user.name', 'Maple']);
+    await this.executor.runChecked('git', ['config', 'user.email', 'maple@localhost']);
+    const status = await this.executor.runChecked('git', ['status', '--porcelain']);
+    if (status.stdout.trim()) {
+      throw new Error('agent worktree has uncommitted changes from an earlier run');
+    }
     await this.executor.runChecked('git', ['checkout', this.config.GITHUB_DEFAULT_BRANCH]);
     await this.executor.runChecked('git', ['pull', '--ff-only']);
+    const existing = await this.executor.run('git', ['branch', '--list', branch]);
+    if (existing.stdout.trim()) {
+      await this.executor.runChecked('git', ['branch', '-D', branch]);
+    }
     await this.executor.runChecked('git', ['checkout', '-b', branch]);
   }
 

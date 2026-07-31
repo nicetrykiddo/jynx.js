@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Logger } from '../core/logger.js';
 
@@ -71,6 +72,11 @@ export class CommandExecutor {
     assertWithinWorkdir(this.config.workdir, target);
   }
 
+  public writeFile(target: string, content: string): void {
+    this.assertPath(target);
+    writeFileSync(path.resolve(this.config.workdir, target), content, 'utf8');
+  }
+
   public async run(command: string, args: string[] = []): Promise<CommandResult> {
     if (!this.allowed.has(command)) {
       throw new CommandNotAllowedError(command);
@@ -89,11 +95,20 @@ export class CommandExecutor {
     if (!existsSync(cwd)) {
       mkdirSync(cwd, { recursive: true });
     }
+    const cache = path.join(tmpdir(), 'maple-npm-cache');
+    mkdirSync(cache, { recursive: true });
 
     return new Promise<CommandResult>((resolve, reject) => {
       const child = spawn(command, args, {
         cwd,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+        env: {
+          PATH: process.env.PATH,
+          LANG: process.env.LANG ?? 'C.UTF-8',
+          HOME: cwd,
+          CI: '1',
+          GIT_TERMINAL_PROMPT: '0',
+          npm_config_cache: cache,
+        },
         shell: false,
       });
 
