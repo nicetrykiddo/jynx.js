@@ -291,11 +291,15 @@ export class AgentRunner {
     return sections.join('\n\n');
   }
 
-  private async actionEvidence(request: string, capabilities: Capability[]): Promise<string> {
+  private async actionEvidence(
+    request: string,
+    capabilities: Capability[],
+    toolQuery = request,
+  ): Promise<string> {
     const evidence: string[] = [];
     if (capabilities.includes('web.read')) {
       if (!this.webSearch?.isConfigured) throw new Error('web search is not configured');
-      const results = await this.webSearch.search(request);
+      const results = await this.webSearch.search(toolQuery);
       evidence.push(
         'WEB RESULTS:\n' +
           results.map((result) => `${result.title}\n${result.snippet}\n${result.url}`).join('\n\n'),
@@ -315,6 +319,7 @@ export class AgentRunner {
     idea: string,
     capabilities: Capability[],
     requestedBy: number | null,
+    toolQuery = idea,
   ): Promise<RunnerResult> {
     const task = await this.repository.createTask({
       userId: requestedBy,
@@ -332,7 +337,7 @@ export class AgentRunner {
     }
     try {
       await this.repository.updateTask(task.id, { status: 'running' });
-      const evidence = await this.actionEvidence(idea, capabilities);
+      const evidence = await this.actionEvidence(idea, capabilities, toolQuery);
       const result = await this.model.complete({
         messages: [
           {

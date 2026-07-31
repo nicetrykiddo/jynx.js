@@ -2,7 +2,7 @@ import { Bot, type Context } from 'grammy';
 import type { AppConfig } from '../config.js';
 import type { Logger } from '../core/logger.js';
 import { AuthService, isTrustedOwnerChannel } from '../core/auth.js';
-import { ConversationService } from '../core/conversation.js';
+import { ConversationService, normalizeReply } from '../core/conversation.js';
 import { Reporter, telegramHtml } from '../core/reporter.js';
 import { decideParticipation, type ParticipationMode } from '../core/participation.js';
 import type { Repository } from '../storage/repository.js';
@@ -561,6 +561,7 @@ export function createBot(deps: BotDependencies): Bot {
       } catch (error) {
         await reporter.reportError('proposals.consider', error);
       }
+      reply = normalizeReply(reply);
 
       const formatted = telegramHtml(reply, 4000);
       const decorated = customEmojiReply(

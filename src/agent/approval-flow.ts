@@ -11,6 +11,7 @@ import {
   requiresTrustedChannel,
   type Capability,
 } from '../core/capabilities.js';
+import { normalizeReply } from '../core/conversation.js';
 
 export interface ApprovalFlowDeps {
   config: Pick<AppConfig, 'GITHUB_REPO'>;
@@ -126,9 +127,10 @@ export class ApprovalFlow {
         capabilities,
         approval.requestedBy ?? null,
       );
+      const output = normalizeReply(result.output ?? 'No result returned.');
       const text =
         result.status === 'done'
-          ? `✅ Approval #${approval.id} completed\n${(result.output ?? 'No result returned.').slice(0, 2800)}\n${approvalContext(approval).join('\n')}`
+          ? `✅ Approval #${approval.id} completed\n${output.slice(0, 2800)}\n${approvalContext(approval).join('\n')}`
           : `⚠️ Approval #${approval.id} failed\n${(result.error ?? 'unknown').slice(0, 500)}\n${approvalContext(approval).join('\n')}`;
       await this.editApproval(approval, text);
       await this.notifySource(
@@ -136,7 +138,7 @@ export class ApprovalFlow {
         result.status === 'done'
           ? '✅ Request completed.'
           : "⚠️ Your request couldn't be completed. The approval message has the status.",
-        result.status === 'done' ? result.output : undefined,
+        result.status === 'done' ? output : undefined,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

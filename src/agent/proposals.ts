@@ -67,6 +67,7 @@ export class ProposalService {
         detected.summary,
         ['web.read'],
         input.userId,
+        [detected.title, detected.summary, recentContext.slice(-800), input.text].join(' '),
       );
       return {
         approvalId: null,

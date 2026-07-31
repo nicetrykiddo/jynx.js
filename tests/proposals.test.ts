@@ -115,7 +115,13 @@ describe('ProposalService', () => {
 
   it('runs web-only research immediately without creating an approval', async () => {
     const repository = {
-      getRecentMessages: vi.fn(async () => []),
+      getRecentMessages: vi.fn(async () => [
+        {
+          role: 'assistant',
+          content: 'want me to pull the scores for Agent Kim Reactivated?',
+          metadata: null,
+        },
+      ]),
       createApproval: vi.fn(),
       countRecentApprovalsForUser: vi.fn(),
     };
@@ -162,5 +168,11 @@ describe('ProposalService', () => {
     });
     expect(repository.createApproval).not.toHaveBeenCalled();
     expect(repository.countRecentApprovalsForUser).not.toHaveBeenCalled();
+    expect(runner.executeAction).toHaveBeenCalledWith(
+      'Find the current review scores for the film.',
+      ['web.read'],
+      42,
+      expect.stringContaining('Agent Kim Reactivated'),
+    );
   });
 });
