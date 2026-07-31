@@ -309,10 +309,12 @@ export function createBot(deps: BotDependencies): Bot {
       await reporter.reportError('conversation.respond', error);
     }
 
-    try {
-      await proposals.considerMessage({ userId: ctx.from.id, text });
-    } catch (error) {
-      await reporter.reportError('proposals.consider', error);
+    if (identity.isOwner) {
+      try {
+        await proposals.considerMessage({ userId: ctx.from.id, text });
+      } catch (error) {
+        await reporter.reportError('proposals.consider', error);
+      }
     }
   });
 
