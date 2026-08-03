@@ -50,6 +50,9 @@ describe('conversation safety and style', () => {
     expect(prompt).toContain('playful banter, goofy observations');
     expect(prompt).toContain('without trying too hard');
     expect(prompt).toContain('reading it never needs owner approval');
+    expect(prompt).toContain('You do not owe everyone equal friendliness');
+    expect(prompt).toContain('build inside jokes');
+    expect(prompt).toContain('Do not fake friendship');
   });
 
   it('passes Telegram profile metadata as untrusted user context', async () => {
