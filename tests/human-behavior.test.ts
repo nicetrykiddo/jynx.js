@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   allowWithinWindow,
+  customEmojiIdsFromEntities,
   customEmojiReply,
   isLowInformationMessage,
 } from '../src/telegram/bot.js';
@@ -17,6 +18,16 @@ describe('human-like Telegram behavior', () => {
   it('uses configured custom emoji sparingly', () => {
     expect(customEmojiReply('hey', ['123'], 1, false)).toBe('hey');
     expect(customEmojiReply('hey', ['123'], 5, false)).toContain('emoji-id="123"');
+  });
+
+  it('learns only valid Telegram custom emoji ids', () => {
+    expect(
+      customEmojiIdsFromEntities([
+        { type: 'custom_emoji', custom_emoji_id: '123456' },
+        { type: 'bold' },
+        { type: 'custom_emoji', custom_emoji_id: 'nope' },
+      ]),
+    ).toEqual(['123456']);
   });
 
   it('does not send punctuation-only nudges to the model', () => {

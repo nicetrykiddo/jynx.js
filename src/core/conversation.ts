@@ -71,8 +71,12 @@ export class ConversationService {
       'the other day',
       'who said',
       'what did',
+      'again',
+      'same one',
+      'the one',
+      'you know',
     ];
-    return triggers.some((t) => lower.includes(t));
+    return triggers.some((t) => lower.includes(t)) || /\b(it|that|this|those|them)\b/.test(lower);
   }
 
   private searchTerms(text: string): string[] {
@@ -113,6 +117,12 @@ export class ConversationService {
       'me',
       'my',
       'your',
+      'it',
+      'them',
+      'those',
+      'same',
+      'one',
+      'again',
     ]);
     return [
       ...new Set(
@@ -307,6 +317,15 @@ export class ConversationService {
         for (const term of terms) {
           const rows = await this.repository.searchMessages(input.chatId, term, 10);
           for (const row of rows) {
+            if (!seen.has(row.id)) {
+              seen.add(row.id);
+              found.push(row);
+            }
+          }
+        }
+        if (found.length === 0 && history[0]) {
+          const older = await this.repository.getMessagesInRange(input.chatId, 30, history[0].id);
+          for (const row of older) {
             if (!seen.has(row.id)) {
               seen.add(row.id);
               found.push(row);

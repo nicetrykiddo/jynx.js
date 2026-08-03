@@ -10,6 +10,9 @@ import { ProposalService } from '../agent/proposals.js';
 import { ApprovalFlow } from '../agent/approval-flow.js';
 import type { IntentDetector } from '../agent/intent.js';
 import type { AgentRunner } from '../agent/runner.js';
+import { readFileSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 
 export interface BotDependencies {
   config: AppConfig;
@@ -124,6 +127,17 @@ export function customEmojiReply(
   return `${text} <tg-emoji emoji-id="${customEmojiId}">❤️</tg-emoji>`;
 }
 
+export function customEmojiIdsFromEntities(
+  entities: readonly { type: string; custom_emoji_id?: string }[] = [],
+): string[] {
+  return entities
+    .filter(
+      (entity) =>
+        entity.type === 'custom_emoji' && /^\d{1,30}$/.test(entity.custom_emoji_id ?? ''),
+    )
+    .map((entity) => entity.custom_emoji_id as string);
+}
+
 export function createBot(deps: BotDependencies): Bot {
   const { config, logger, auth, conversation, repository, intent, agentRunner } = deps;
   const bot = new Bot(config.TELEGRAM_BOT_TOKEN);
@@ -149,13 +163,26 @@ export function createBot(deps: BotDependencies): Bot {
   const modelRequests = new Map<number, number[]>();
   const burstVersions = new Map<number, number>();
   const activeChats = new Set<number>();
+  const learnedEmojiPath = path.resolve(config.AGENT_WORKDIR, 'custom-emojis.json');
+  const customEmojiIds = new Set(config.JYNX_CUSTOM_EMOJI_IDS);
+  try {
+    const learned = JSON.parse(readFileSync(learnedEmojiPath, 'utf8')) as unknown;
+    if (Array.isArray(learned)) {
+      for (const id of learned) {
+        if (typeof id === 'string' && /^\d{1,30}$/.test(id) && customEmojiIds.size < 100) {
+          customEmojiIds.add(id);
+        }
+      }
+    }
+  } catch {
+    // No learned emoji file yet.
+  }
 
   const reactNaturally = async (ctx: Context): Promise<void> => {
     if (!config.ENABLE_MESSAGE_REACTIONS || !ctx.chat || !ctx.message) return;
+    const available = [...customEmojiIds];
     const customEmojiId =
-      config.JYNX_CUSTOM_EMOJI_IDS[
-        Math.abs(ctx.message.message_id) % Math.max(1, config.JYNX_CUSTOM_EMOJI_IDS.length)
-      ];
+      available[Math.abs(ctx.message.message_id) % Math.max(1, available.length)];
     if (customEmojiId) {
       try {
         await ctx.api.setMessageReaction(ctx.chat.id, ctx.message.message_id, [
@@ -221,6 +248,31 @@ export function createBot(deps: BotDependencies): Bot {
     telegramContextCache.set(key, { expiresAt: Date.now() + 10 * 60_000, value });
     return value;
   };
+
+  bot.use(async (ctx, next) => {
+    const message = ctx.message;
+    const entities = message
+      ? [
+          ...('entities' in message ? (message.entities ?? []) : []),
+          ...('caption_entities' in message ? (message.caption_entities ?? []) : []),
+        ]
+      : [];
+    const learned = customEmojiIdsFromEntities(entities);
+    const before = customEmojiIds.size;
+    for (const id of learned) {
+      if (customEmojiIds.size >= 100) break;
+      customEmojiIds.add(id);
+    }
+    if (customEmojiIds.size !== before) {
+      try {
+        await mkdir(path.dirname(learnedEmojiPath), { recursive: true });
+        await writeFile(learnedEmojiPath, JSON.stringify([...customEmojiIds]), { mode: 0o600 });
+      } catch (error) {
+        await reporter.reportError('emoji.learn', error);
+      }
+    }
+    await next();
+  });
 
   bot.catch((error) => {
     void reporter.reportError('bot.middleware', error.error);
@@ -583,6 +635,7 @@ export function createBot(deps: BotDependencies): Bot {
       } catch (error) {
         await reporter.reportError('persist.message.silent', error);
       }
+      if (ctx.message.message_id % 5 === 0) await reactNaturally(ctx);
       return;
     }
 
@@ -700,7 +753,7 @@ export function createBot(deps: BotDependencies): Bot {
       const formatted = telegramHtml(reply, 4000);
       const decorated = customEmojiReply(
         formatted,
-        config.JYNX_CUSTOM_EMOJI_IDS,
+        [...customEmojiIds],
         ctx.message.message_id,
         identity.role === 'owner',
       );

@@ -53,6 +53,11 @@ describe('conversation safety and style', () => {
     expect(prompt).toContain('You do not owe everyone equal friendliness');
     expect(prompt).toContain('build inside jokes');
     expect(prompt).toContain('Do not fake friendship');
+    expect(prompt).toContain('Confidence is not constant arrogance');
+    expect(prompt).toContain('playful profanity');
+    expect(prompt).toContain('harmless mischievous');
+    expect(prompt).toContain('recalled older messages');
+    expect(prompt).toContain('start a conversational thread');
   });
 
   it('passes Telegram profile metadata as untrusted user context', async () => {
@@ -198,6 +203,46 @@ describe('conversation safety and style', () => {
     expect(result.usedWebSearch).toBe(true);
     expect(captured?.messages).toContainEqual(
       expect.objectContaining({ role: 'tool', name: 'web_search_error' }),
+    );
+  });
+
+  it('recalls older chat messages before treating a vague follow-up as contextless', async () => {
+    let captured: CompletionRequest | undefined;
+    const service = new ConversationService(
+      {
+        MAX_HISTORY_MESSAGES: 10,
+        MAX_GROUP_CONTEXT_MESSAGES: 10,
+        MAX_RESPONSE_CHARS: 4096,
+        JYNX_TIMEZONE: 'UTC',
+      },
+      {
+        getRecentMessages: vi.fn(async () => [
+          { id: 10, role: 'user', content: 'we can handle it later', metadata: {} },
+        ]),
+        getMemories: vi.fn(async () => []),
+        searchMessages: vi.fn(async () => []),
+        getMessagesInRange: vi.fn(async () => [
+          { id: 2, role: 'user', content: 'use the blue version', metadata: {} },
+        ]),
+      } as never,
+      {
+        complete: vi.fn(async (request: CompletionRequest) => {
+          captured = request;
+          return { content: 'the blue one?', toolCalls: [], finishReason: 'stop' };
+        }),
+      } as never,
+    );
+
+    await service.respond({
+      identity: { userId: 3, role: 'user', isOwner: false, isAdmin: false },
+      chatId: -1,
+      chatType: 'supergroup',
+      displayName: 'Sam',
+      userText: 'do that again',
+    });
+
+    expect(captured?.messages).toContainEqual(
+      expect.objectContaining({ role: 'tool', name: 'history_recall' }),
     );
   });
 
