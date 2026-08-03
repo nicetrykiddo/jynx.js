@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, ilike, sql } from 'drizzle-orm';
 import type { Database } from './db.js';
 import {
   approvals,
@@ -12,6 +12,7 @@ import {
   type Message,
   type NewMessage,
   type Task,
+  type User,
 } from './schema.js';
 
 export interface UpsertChatInput {
@@ -59,9 +60,26 @@ export class Repository {
           username: input.username ?? null,
           firstName: input.firstName ?? null,
           lastName: input.lastName ?? null,
+          isOwner: input.isOwner ?? false,
+          isAdmin: input.isAdmin ?? false,
           updatedAt: new Date(),
         },
       });
+  }
+
+  public async getUser(userId: number): Promise<User | undefined> {
+    const rows = await this.db.select().from(users).where(eq(users.id, userId)).limit(1);
+    return rows[0];
+  }
+
+  public async getUserByUsername(username: string): Promise<User | undefined> {
+    const rows = await this.db
+      .select()
+      .from(users)
+      .where(ilike(users.username, username))
+      .orderBy(desc(users.updatedAt))
+      .limit(1);
+    return rows[0];
   }
 
   public async getChat(chatId: number): Promise<Chat | undefined> {

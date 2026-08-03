@@ -64,9 +64,23 @@ export function parseNaturalEdit(text: string): string | null {
   return match?.[1]?.trim() || null;
 }
 
+export function parseIdArgument(
+  text: string,
+): { id: number } | { username: string } | null | undefined {
+  const token = text.trim().split(/\s+/, 1)[0];
+  if (!token) return null;
+  if (/^\d+$/.test(token)) {
+    const id = Number(token);
+    return Number.isSafeInteger(id) && id > 0 ? { id } : undefined;
+  }
+  const username = token.replace(/^@/, '');
+  return /^[A-Za-z0-9_]{1,32}$/.test(username) ? { username } : undefined;
+}
+
 export function serializeTelegramContext(value: unknown): string {
-  const blocked = new Set(['invite_link', 'file_id', 'file_unique_id']);
-  const raw = JSON.stringify(value, (key, item) => (blocked.has(key) ? undefined : item)) ?? 'null';
+  const blocked = (key: string) =>
+    key === 'invite_link' || /(?:^|_)file_(?:unique_)?id$/.test(key);
+  const raw = JSON.stringify(value, (key, item) => (blocked(key) ? undefined : item)) ?? 'null';
   return raw.length > 12_000 ? `${raw.slice(0, 12_000)}…` : raw;
 }
 
@@ -165,7 +179,16 @@ export function createBot(deps: BotDependencies): Bot {
     if (cached && cached.expiresAt > Date.now()) return cached.value;
 
     const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
-    const [userProfile, userGifts, chatProfile, chatGifts, membership, memberCount] =
+    const [
+      userProfile,
+      userGifts,
+      chatProfile,
+      chatGifts,
+      membership,
+      memberCount,
+      botMembership,
+      administrators,
+    ] =
       await Promise.allSettled([
         ctx.api.getChat(ctx.from.id),
         ctx.api.getUserGifts(ctx.from.id, { limit: 20 }),
@@ -173,6 +196,8 @@ export function createBot(deps: BotDependencies): Bot {
         ctx.api.getChatGifts(ctx.chat.id, { limit: 20 }),
         isGroup ? ctx.api.getChatMember(ctx.chat.id, ctx.from.id) : Promise.resolve(undefined),
         isGroup ? ctx.api.getChatMemberCount(ctx.chat.id) : Promise.resolve(undefined),
+        isGroup ? ctx.api.getChatMember(ctx.chat.id, ctx.me.id) : Promise.resolve(undefined),
+        isGroup ? ctx.api.getChatAdministrators(ctx.chat.id) : Promise.resolve(undefined),
       ]);
     const valueOf = <T>(result: PromiseSettledResult<T>): T | undefined =>
       result.status === 'fulfilled' ? result.value : undefined;
@@ -180,11 +205,14 @@ export function createBot(deps: BotDependencies): Bot {
       user: ctx.from,
       userProfile: valueOf(userProfile),
       userGifts: valueOf(userGifts),
+      bot: ctx.me,
       chat: ctx.chat,
       chatProfile: valueOf(chatProfile),
       chatGifts: valueOf(chatGifts),
       membership: valueOf(membership),
       memberCount: valueOf(memberCount),
+      botMembership: valueOf(botMembership),
+      administrators: valueOf(administrators),
     });
     if (telegramContextCache.size >= 1000) {
       const oldest = telegramContextCache.keys().next().value;
@@ -213,11 +241,92 @@ export function createBot(deps: BotDependencies): Bot {
   });
 
   bot.command(['whoami', 'id'], async (ctx) => {
-    if (!ctx.from) {
+    if (!ctx.from || !ctx.chat) return;
+
+    const argument = parseIdArgument(String(ctx.match ?? ''));
+    if (argument === undefined) {
+      await ctx.reply('usage: /id [user id or @username], or reply to someone with /id');
       return;
     }
-    const identity = auth.identify(ctx.from.id);
-    await ctx.reply(`id: ${identity.userId}\nrole: ${identity.role}`);
+
+    const repliedUser = ctx.message?.reply_to_message?.from;
+    let source = 'command sender';
+    let targetId = ctx.from.id;
+    let telegramUser: typeof ctx.from | undefined = ctx.from;
+    let storedUser: Awaited<ReturnType<typeof repository.getUser>>;
+
+    try {
+      if (argument && 'id' in argument) {
+        source = 'user id argument';
+        targetId = argument.id;
+        telegramUser = targetId === ctx.from.id ? ctx.from : undefined;
+        storedUser = await repository.getUser(targetId);
+      } else if (argument && 'username' in argument) {
+        source = 'username argument';
+        storedUser = await repository.getUserByUsername(argument.username);
+        if (!storedUser) {
+          await ctx.reply(`i don't know @${argument.username} yet; they need to share a chat with me first`);
+          return;
+        }
+        targetId = storedUser.id;
+        telegramUser = targetId === ctx.from.id ? ctx.from : undefined;
+      } else if (repliedUser) {
+        source = 'replied user';
+        targetId = repliedUser.id;
+        telegramUser = repliedUser;
+        storedUser = await repository.getUser(targetId);
+      } else {
+        storedUser = await repository.getUser(targetId);
+      }
+    } catch (error) {
+      await reporter.reportError('id.resolve', error);
+    }
+
+    const identity = auth.identify(targetId);
+    if (telegramUser || storedUser) {
+      try {
+        await repository.upsertUser({
+          id: targetId,
+          username: telegramUser?.username ?? storedUser?.username,
+          firstName: telegramUser?.first_name ?? storedUser?.firstName,
+          lastName: telegramUser?.last_name ?? storedUser?.lastName,
+          isOwner: identity.isOwner,
+          isAdmin: identity.isAdmin,
+        });
+        storedUser = await repository.getUser(targetId);
+      } catch (error) {
+        await reporter.reportError('id.persist', error);
+      }
+    }
+
+    const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+    const [profile, gifts, photos, membership, boosts] = await Promise.allSettled([
+      ctx.api.getChat(targetId),
+      ctx.api.getUserGifts(targetId, { limit: 20 }),
+      ctx.api.getUserProfilePhotos(targetId, { limit: 100 }),
+      isGroup ? ctx.api.getChatMember(ctx.chat.id, targetId) : Promise.resolve(undefined),
+      isGroup ? ctx.api.getUserChatBoosts(ctx.chat.id, targetId) : Promise.resolve(undefined),
+    ]);
+    const valueOf = <T>(result: PromiseSettledResult<T>): T | null =>
+      result.status === 'fulfilled' ? (result.value ?? null) : null;
+    const photoInfo = valueOf(photos);
+    const output = serializeTelegramContext({
+      resolvedBy: source,
+      identity,
+      telegramUser,
+      storedUser,
+      telegramProfile: valueOf(profile),
+      profilePhotos: photoInfo
+        ? { totalCount: photoInfo.total_count, returnedCount: photoInfo.photos.length }
+        : null,
+      gifts: valueOf(gifts),
+      currentChatMembership: valueOf(membership),
+      currentChatBoosts: valueOf(boosts),
+    });
+    const chunks = output.match(/[\s\S]{1,3900}/g) ?? [output];
+    for (const [index, chunk] of chunks.entries()) {
+      await ctx.reply(`${index === 0 ? 'ID info\n' : ''}${chunk}`);
+    }
   });
 
   bot.command('edit', async (ctx) => {

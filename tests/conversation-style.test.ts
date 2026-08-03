@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ConversationService, normalizeReply } from '../src/core/conversation.js';
 import { buildSystemPrompt } from '../src/core/persona.js';
-import { parseNaturalEdit, serializeTelegramContext } from '../src/telegram/bot.js';
+import {
+  parseIdArgument,
+  parseNaturalEdit,
+  serializeTelegramContext,
+} from '../src/telegram/bot.js';
 import type { CompletionRequest } from '../src/model/types.js';
 
 describe('conversation safety and style', () => {
@@ -45,6 +49,7 @@ describe('conversation safety and style', () => {
     });
     expect(prompt).toContain('playful banter, goofy observations');
     expect(prompt).toContain('without trying too hard');
+    expect(prompt).toContain('reading it never needs owner approval');
   });
 
   it('passes Telegram profile metadata as untrusted user context', async () => {
@@ -89,11 +94,14 @@ describe('conversation safety and style', () => {
       title: 'friends',
       invite_link: 'https://t.me/+secret',
       photo: { file_id: 'downloadable', file_unique_id: 'stable' },
+      fullPhoto: { small_file_id: 'also-downloadable', big_file_unique_id: 'also-stable' },
     });
     expect(context).toContain('friends');
     expect(context).not.toContain('secret');
     expect(context).not.toContain('downloadable');
     expect(context).not.toContain('stable');
+    expect(context).not.toContain('also-downloadable');
+    expect(context).not.toContain('also-stable');
   });
 
   it('removes blank-line assistant formatting', () => {
@@ -244,5 +252,12 @@ describe('conversation safety and style', () => {
   it('parses a natural edit only when it is explicitly phrased as one', () => {
     expect(parseNaturalEdit('edit this to nah that was wrong')).toBe('nah that was wrong');
     expect(parseNaturalEdit('i might edit this later')).toBeNull();
+  });
+
+  it('parses id command arguments without confusing usernames and ids', () => {
+    expect(parseIdArgument('5916478545')).toEqual({ id: 5916478545 });
+    expect(parseIdArgument('@ilysexy')).toEqual({ username: 'ilysexy' });
+    expect(parseIdArgument('')).toBeNull();
+    expect(parseIdArgument('@bad-name')).toBeUndefined();
   });
 });
