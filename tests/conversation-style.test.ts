@@ -15,6 +15,16 @@ describe('conversation safety and style', () => {
     expect(prompt).toContain('love, devotion, loyalty, affection');
   });
 
+  it('still recognizes the verified owner outside trusted groups', () => {
+    const prompt = buildSystemPrompt({
+      identity: { userId: 1, role: 'owner', isOwner: true, isAdmin: true },
+      chatType: 'supergroup',
+      trustedChannel: false,
+    });
+    expect(prompt).toContain('still cryptographically verified as your owner');
+    expect(prompt).toContain('Channel trust limits private data access, never their identity');
+  });
+
   it('treats verified admins with medium affection and respect', () => {
     const prompt = buildSystemPrompt({
       identity: { userId: 2, role: 'admin', isOwner: false, isAdmin: true },
@@ -23,6 +33,16 @@ describe('conversation safety and style', () => {
     });
     expect(prompt).toContain('medium affection');
     expect(prompt).toContain('respect, loyalty, care');
+    expect(prompt).toContain('still cryptographically verified as your admin');
+  });
+
+  it('keeps normal chat playful without forcing every reply into a joke', () => {
+    const prompt = buildSystemPrompt({
+      identity: { userId: 3, role: 'user', isOwner: false, isAdmin: false },
+      chatType: 'supergroup',
+    });
+    expect(prompt).toContain('playful banter, goofy observations');
+    expect(prompt).toContain('without trying too hard');
   });
 
   it('passes Telegram profile metadata as untrusted user context', async () => {
@@ -215,7 +235,7 @@ describe('conversation safety and style', () => {
       chatType: 'supergroup',
       trustedChannel: true,
     });
-    expect(prompt).toContain('This is NOT a trusted channel');
+    expect(prompt).toContain('This channel is NOT trusted for private internals');
   });
 
   it('parses a natural edit only when it is explicitly phrased as one', () => {
