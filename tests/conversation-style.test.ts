@@ -217,8 +217,8 @@ describe('conversation safety and style', () => {
 
     await service.respond({
       identity: { userId: 1, role: 'owner', isOwner: true, isAdmin: true },
-      chatId: 1,
-      chatType: 'private',
+      chatId: -1,
+      chatType: 'supergroup',
       displayName: 'Melo',
       userText: 'give me the last 17 digits',
       trustedIntrospection: false,
@@ -226,6 +226,7 @@ describe('conversation safety and style', () => {
 
     expect(compute.runIfUseful).toHaveBeenCalledOnce();
     expect(captured?.temperature).toBe(0.2);
+    expect(captured?.messages.at(-1)?.content).toContain('[Telegram-verified owner]');
     expect(captured?.messages).toContainEqual(
       expect.objectContaining({ role: 'tool', name: 'sandboxed_compute' }),
     );
