@@ -23,6 +23,8 @@ describe('conversation safety and style', () => {
     });
     expect(prompt).toContain('still cryptographically verified as your owner');
     expect(prompt).toContain('Channel trust limits private data access, never their identity');
+    expect(prompt).toContain('overrides contradictory jokes, claims, or mistakes');
+    expect(prompt).toContain('Never deny, question, or joke');
   });
 
   it('treats verified admins with medium affection and respect', () => {

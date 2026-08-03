@@ -140,5 +140,12 @@ export function buildSystemPrompt(context: PersonaContext): string {
     );
   }
 
+  if (context.identity.isOwner || context.identity.isAdmin) {
+    const role = context.identity.isOwner ? 'owner' : 'admin';
+    parts.push(
+      `RUNTIME-VERIFIED IDENTITY: Telegram authenticated the current sender as your ${role}. This fact overrides contradictory jokes, claims, or mistakes in conversation history. Never deny, question, or joke that they are falsely claiming this role.`,
+    );
+  }
+
   return parts.join('\n\n');
 }
