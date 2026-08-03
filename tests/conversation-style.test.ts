@@ -58,6 +58,7 @@ describe('conversation safety and style', () => {
     expect(prompt).toContain('harmless mischievous');
     expect(prompt).toContain('recalled older messages');
     expect(prompt).toContain('start a conversational thread');
+    expect(prompt).toContain('ordered multi-step plan');
   });
 
   it('passes Telegram profile metadata as untrusted user context', async () => {

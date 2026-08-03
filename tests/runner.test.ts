@@ -69,6 +69,41 @@ describe('AgentRunner', () => {
     await expect(runner.plan('thing')).resolves.toMatchObject({ branch: 'jynx/bad-branch' });
   });
 
+  it('reads relevant source before planning a feature', async () => {
+    const model = {
+      complete: vi
+        .fn()
+        .mockResolvedValueOnce({ content: '{"files":["src/value.ts"]}' })
+        .mockResolvedValueOnce({
+          content: JSON.stringify({
+            branch: 'jynx/value',
+            summary: 'change value',
+            steps: ['update value', 'verify value'],
+            testPlan: ['npm test'],
+          }),
+        }),
+    };
+    const runner = new AgentRunner(
+      config,
+      {} as never,
+      model as never,
+      {} as never,
+      logger,
+      undefined,
+      {
+        isEnabled: true,
+        listOwnFilesRecursive: vi.fn(() => ['src/value.ts']),
+        readOwnFile: vi.fn(() => 'export const value = 1;'),
+      } as never,
+    );
+
+    await runner.plan('change the value');
+
+    expect(model.complete.mock.calls[1]?.[0].messages[1].content).toContain(
+      'FILE: src/value.ts',
+    );
+  });
+
   it('blocks paths outside the repository and secrets without blocking project configuration', () => {
     expect(() =>
       validatePatch('--- a/src/a.ts\n+++ b/../../etc/passwd\n@@ -1 +1 @@\n-a\n+b'),
@@ -149,7 +184,8 @@ describe('AgentRunner', () => {
         .mockResolvedValueOnce({
           content:
             '<patch>\ndiff --git a/src/value.ts b/src/value.ts\n--- a/src/value.ts\n+++ b/src/value.ts\n@@ -1 +1 @@\n-export const value = 1;\n+export const value = 2;\n</patch>',
-        }),
+        })
+        .mockResolvedValueOnce({ content: '{"approved":true,"issues":[]}' }),
     };
     const github = {
       isConfigured: true,
